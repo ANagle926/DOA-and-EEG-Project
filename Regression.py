@@ -1,217 +1,132 @@
-
-from scikeras.wrappers import KerasRegressor
-from sklearn.model_selection import GridSearchCV
-
-
-
-def create_model(units=64, dropout=0.3):
-    model = Sequential()
-    model.add(LSTM(units, return_sequences=True, input_shape=(SEGLEN, 1)))
-    model.add(Dense(64, activation='relu'))
-    model.add(Dropout(dropout))
-    model.add(Bidirectional(LSTM(units, return_sequences=True)))
-    model.add(GlobalAveragePooling1D())
-    model.add(Dropout(dropout))
-    model.add(Dense(100, activation='relu'))
-    model.add(Dropout(dropout))
-    model.add(Dense(32, activation='relu'))
-    model.add(Dense(1))
-    model.compile(loss='mean_absolute_error', optimizer='adam', metrics=['mean_absolute_error'])
-    return model
-
-# Define KerasRegressor
-model = KerasRegressor(
-    model=create_model,  # Use create_model function
-    verbose=1
-)
-param_grid = {
-    'model__units': [64, 100],
-    'model__dropout': [0.6, 0.7],
-    'batch_size': [150, 200, 250],
-    'epochs': [10, 15]
-}
-
-grid = GridSearchCV(estimator=model, param_grid=param_grid, n_jobs=1, cv=2)
-grid_result = grid.fit(x_train, y_train)
-
-print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
-
-
-means = grid_result.cv_results_['mean_test_score']
-stds = grid_result.cv_results_['std_test_score']
-params = grid_result.cv_results_['params']
-for mean, stdev, param in zip(means, stds, params):
-    print("%f (%f) with: %r" % (mean, stdev, param))
-
-import tensorflow.keras.models.Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D
-from scikeras.wrappers import KerasRegressor
-from sklearn.model_selection import GridSearchCV
-from tensorflow.keras.models import Sequential
-
-
-
-def create_model(units=64, dropout=0.3):
-    model = Sequential()
-    model.add(LSTM(units, return_sequences=True, input_shape=(SEGLEN, 1)))
-    model.add(Dense(64, activation='relu'))
-    model.add(Dropout(dropout))
-    model.add(Bidirectional(LSTM(units, return_sequences=True)))
-    model.add(GlobalAveragePooling1D())
-    model.add(Dropout(dropout))
-    model.add(Dense(128, activation='relu'))
-    model.add(Dropout(dropout))
-    model.add(Dense(64, activation='relu'))
-    model.add(Dense(1))
-    model.compile(loss='mean_absolute_error', optimizer='adam', metrics=['mean_absolute_error'])
-    return model
-
-
-# Define KerasRegressor
-model = KerasRegressor(
-    model=create_model,  # Use create_model function
-    verbose=1
-)
-param_grid = {
-    'model__units': [64, 100],
-    'model__dropout': [0.6, 0.7],
-    'batch_size': [150, 200, 250],
-    'epochs': [10, 15]
-}
-
-grid = GridSearchCV(estimator=model, param_grid=param_grid, n_jobs=1, cv=2)
-grid_result = grid.fit(x_train, y_train)
-
-print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
-
-
-means = grid_result.cv_results_['mean_test_score']
-stds = grid_result.cv_results_['std_test_score']
-params = grid_result.cv_results_['params']
-for mean, stdev, param in zip(means, stds, params):
-    print("%f (%f) with: %r" % (mean, stdev, param))
-
-
-
 import numpy as np
 import scipy.signal
 import matplotlib.pyplot as plt
-from sklearn.metrics import r2_score, mean_absolute_error
 
-def analyze_model(model, x_test, y_test, c_test):
-    # Make predictions on the test set
-    pred_test = model.predict(x_test).flatten()
-
-    for caseid in np.unique(c_test):
-        case_mask = (c_test == caseid)
-        pred_test[case_mask] = scipy.signal.medfilt(pred_test[case_mask], kernel_size=15)
-
-    # Calculate Mean Absolute Error
-    test_mae = mean_absolute_error(y_test, pred_test)
-    print(f'Test MAE: {test_mae}')
-
-    # Calculate correlation coefficient and R-squared
-    corr = np.corrcoef(y_test, pred_test)[0, 1]
-    r2 = r2_score(y_test, pred_test)
-    print(f'Correlation coefficient: {corr}')
-    print(f'R squared: {r2}')
-
-    # Scatter plot of actual vs. predicted DOA values
-    plt.figure(figsize=(6, 6))
-    plt.scatter(y_test, pred_test, s=1, alpha=0.5, color='violet')
-    plt.xlabel('Actual DOA')
-    plt.ylabel('Predicted DOA')
-    plt.title(f'Scatter Plot (Correlation: {corr:.4f})')
-    plt.plot([0, 2], [0, 2], 'r--')
-    plt.xlim([0, 2])
-    plt.ylim([0, 2])
-    plt.show()
-
-      # Plot predictions for random test cases
-    for caseid in np.random.choice(np.unique(c_test), size=3, replace=False):
-        case_mask = (c_test == caseid)
-        case_len = np.sum(case_mask)
-        if case_len == 0:
-            continue
-        our_mae = np.mean(np.abs(y_test[case_mask] - pred_test[case_mask]))
-        t = np.arange(case_len)
-        plt.figure(figsize=(10, 4))
-        plt.plot(t, y_test[case_mask], label='Actual DOA')
-        plt.plot(t, pred_test[case_mask], label=f'Predicted DOA (DOA: {our_mae:.4f})')
-        plt.legend()
-        plt.xlabel('Time')
-        plt.ylabel('DOA')
-        plt.title(f'Case {caseid}')
-        plt.show()
-        print(f'Case {caseid}, DOA: {our_mae:.4f}')
-
-#LSTM--- works (tested)
-
-from tensorflow import keras
-from tensorflow.keras.layers import Input, RNN, LSTMCell, Dense, Dropout
-from tensorflow.keras.layers import GlobalAveragePooling1D
-from tensorflow.keras.models import Model
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM
-from tensorflow.keras.layers import Bidirectional, LSTM
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 
-model = Sequential()
-model.add(LSTM(64,return_sequences=True))
-model.add(Dense(64, activation='relu'))
-model.add(Dropout(0.3))
-model.add(Bidirectional(LSTM(64, return_sequences=True)))
-model.add(GlobalAveragePooling1D())
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.4))
-model.add(Dense(64))
-model.add(Dense(1))
-model.compile(loss='mean_absolute_error', optimizer='adam', metrics=['mean_absolute_error'])
+from scikeras.wrappers import KerasRegressor
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import mean_absolute_error, r2_score
 
-model.fit(
-    x_train, y_train,
-    validation_data=(x_test, y_test),
-    epochs=10,
-    batch_size=256,
-    callbacks=[
-        ModelCheckpoint('model.keras', save_best_only=True),
-        EarlyStopping(patience=3, restore_best_weights=True)
-    ]
-)
 
-test_mae, test_accuracy = model.evaluate(x_test, y_test)
-print(f"Test accuracy: {test_accuracy}")
-print(f"Test MAE: {test_mae}")
+class EEGRegressor:
+    def __init__(self, x_train, y_train, x_test, y_test, seglen):
+        self.x_train, self.y_train = x_train, y_train
+        self.x_test, self.y_test = x_test, y_test
+        self.seglen = seglen  # Segment length (SEGLEN)
 
-analyze_model(model, x_test, y_test, c_test)
+        # Preprocessed data
+        self.x_train_resampled = None
+        self.y_train_resampled = None
 
-test_model = Sequential()
-test_model.add(LSTM(64,return_sequences=True))
-test_model.add(Dense(64, activation='relu'))
-test_model.add(Dropout(0.5))
-test_model.add(Bidirectional(LSTM(128, return_sequences=True)))
-test_model.add(GlobalAveragePooling1D())
-test_model.add(Dropout(0.7))
-test_model.add(Dense(64, activation='relu'))
-test_model.add(Dropout(0.5))
-test_model.add(Dense(64, activation='relu'))
-test_model.add(Dense(1))
-test_model.compile(loss='mean_absolute_error', optimizer='adam', metrics=['mean_absolute_error'])
+        # Final model
+        self.model = None
 
-test_model.fit(
-    x_train, y_train,
-    validation_data=(x_test, y_test),
-    epochs=15,
-    batch_size=256,
-    callbacks=[
-        ModelCheckpoint('model.keras', save_best_only=True),
-        EarlyStopping(patience=3, restore_best_weights=True)
-    ]
-)
+    def preprocess_data(self):
+        """Preprocess the data (e.g., resample, normalization, etc.)."""
+        # Reshape the input data for training
+        self.x_train_resampled = self.x_train.reshape(-1, self.seglen, 1)
+        self.x_test_resampled = self.x_test.reshape(-1, self.seglen, 1)
 
-test_mae, test_accuracy = test_model.evaluate(x_test, y_test)
-print(f"Test accuracy: {test_accuracy}")
-print(f"Test MAE: {test_mae}")
-print(f"    ")
-print(f"    ")
-analyze_model(test_model, x_test, y_test, c_test)
+    def create_model(self, units=64, dropout=0.3):
+        """Create the LSTM regression model."""
+        model = Sequential([
+            LSTM(units, return_sequences=True, input_shape=(self.seglen, 1)),
+            Dense(64, activation='relu'),
+            Dropout(dropout),
+            Bidirectional(LSTM(units, return_sequences=True)),
+            GlobalAveragePooling1D(),
+            Dropout(dropout),
+            Dense(100, activation='relu'),
+            Dropout(dropout),
+            Dense(32, activation='relu'),
+            Dense(1)  # Output layer for regression
+        ])
+        model.compile(loss='mean_absolute_error', optimizer='adam', metrics=['mean_absolute_error'])
+        return model
+
+    def train_model(self, epochs=15, batch_size=256):
+        """Train the LSTM model."""
+        self.model = self.create_model()
+
+        # Train the model with checkpointing
+        self.model.fit(
+            self.x_train_resampled, self.y_train,
+            validation_data=(self.x_test_resampled, self.y_test),
+            epochs=epochs,
+            batch_size=batch_size,
+            callbacks=[ModelCheckpoint('model.keras', save_best_only=True),
+                       EarlyStopping(patience=3, restore_best_weights=True)]
+        )
+
+    def hyperparameter_tuning(self):
+        """Hyperparameter tuning using GridSearchCV."""
+        model = KerasRegressor(model=self.create_model, verbose=1)
+
+        param_grid = {
+            'model__units': [64, 100],
+            'model__dropout': [0.3, 0.5],
+            'batch_size': [150, 200, 256],
+            'epochs': [10, 15]
+        }
+
+        grid = GridSearchCV(estimator=model, param_grid=param_grid, n_jobs=1, cv=2)
+        grid_result = grid.fit(self.x_train_resampled, self.y_train)
+
+        print(f"Best: {grid_result.best_score_} using {grid_result.best_params_}")
+        return grid_result.best_params_
+
+    def evaluate_model(self):
+        """Evaluate and analyze the model's performance."""
+        # Predict the test set
+        pred_test = self.model.predict(self.x_test_resampled).flatten()
+
+        # Calculate Mean Absolute Error and R-squared
+        test_mae = mean_absolute_error(self.y_test, pred_test)
+        r2 = r2_score(self.y_test, pred_test)
+        print(f'Test MAE: {test_mae}')
+        print(f'R squared: {r2}')
+
+        # Scatter plot of actual vs predicted values
+        plt.figure(figsize=(6, 6))
+        plt.scatter(self.y_test, pred_test, s=1, alpha=0.5, color='violet')
+        plt.xlabel('Actual Values')
+        plt.ylabel('Predicted Values')
+        plt.title(f'Scatter Plot (R2: {r2:.4f})')
+        plt.plot([0, max(self.y_test)], [0, max(pred_test)], 'r--')
+        plt.show()
+
+        # Optionally smooth the predictions (median filter)
+        for caseid in np.unique(self.y_test):
+            case_mask = (self.y_test == caseid)
+            pred_test[case_mask] = scipy.signal.medfilt(pred_test[case_mask], kernel_size=15)
+
+        # Plot actual vs predicted after smoothing
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.y_test, label='Actual')
+        plt.plot(pred_test, label='Predicted (Smoothed)', linestyle='--')
+        plt.legend()
+        plt.xlabel('Sample')
+        plt.ylabel('Value')
+        plt.title('Model Predictions vs Actual (Smoothed)')
+        plt.show()
+
+        return test_mae, r2
+
+"""
+# Example usage
+seglen = 512  # Example segment length
+lstm_regressor = EEGRegressor(x_train, y_train, x_test, y_test, seglen)
+
+# Preprocess data
+lstm_regressor.preprocess_data()
+
+# Train the model
+lstm_regressor.train_model(epochs=10, batch_size=200)
+
+# Evaluate and analyze the model
+lstm_regressor.evaluate_and_analyze_model()
+
+"""
