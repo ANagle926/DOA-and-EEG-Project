@@ -3,12 +3,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import Counter
 
-from imblearn.over_sampling import SMOTE
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, GlobalAveragePooling1D
+from tensorflow.keras.layers import LSTM, Dense, Bidirectional, Dropout, GlobalAveragePooling1D
 from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.utils import to_categorical
 
-
+from imblearn.over_sampling import SMOTE
 from scikeras.wrappers import KerasClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, roc_curve, auc, f1_score
@@ -39,7 +39,7 @@ class EEGClassifier:
         # Apply SMOTE for class balancing
         smote = SMOTE(random_state=42)
         self.x_train_resampled, self.y_train_resampled = smote.fit_resample(x_train_flat, self.y_train_cat)
-        self.x_train_resampled = self.x_train_resampled.reshape(-1, 512, 1)
+        self.x_train_resampled = self.x_train_resampled.reshape(-1, self.x_train.shape[1], 1)
 
         # Convert labels to one-hot encoding
         self.y_train_cat = to_categorical(self.y_train_resampled, num_classes=3)
@@ -148,13 +148,3 @@ class EEGClassifier:
         plt.show()
 
         return accuracy, cm, f1, roc_auc
-
-"""
-# Example Usage
-# Assuming `x_train, y_train, x_test, y_test` are already defined in the previous dataset class.
-
-classifier = EEGClassifier(x_train, y_train, x_test, y_test)
-classifier.preprocess_data()
-classifier.train_model()
-classifier.evaluate_model()
-"""
