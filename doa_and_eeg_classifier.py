@@ -7,11 +7,11 @@ Original file is located at
     https://colab.research.google.com/drive/1x53FwOX2RZ1AZAY_fcTkoHclpxroG8gG
 """
 
-!pip install vitaldb
-!pip install keras==3.6.0
-!pip install tensorflow==2.18.0
-!pip install scikit-learn==1.5.1
-!pip install scikeras
+pip install vitaldb
+pip install keras==3.6.0
+pip install tensorflow==2.18.0
+pip install scikit-learn==1.5.1
+pip install scikeras
 
 import numpy as np
 import pandas as pd
