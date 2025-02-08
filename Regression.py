@@ -114,19 +114,3 @@ class EEGRegressor:
         plt.show()
 
         return test_mae, r2
-
-"""
-# Example usage
-seglen = 512  # Example segment length
-lstm_regressor = EEGRegressor(x_train, y_train, x_test, y_test, seglen)
-
-# Preprocess data
-lstm_regressor.preprocess_data()
-
-# Train the model
-lstm_regressor.train_model(epochs=10, batch_size=200)
-
-# Evaluate and analyze the model
-lstm_regressor.evaluate_and_analyze_model()
-
-"""
