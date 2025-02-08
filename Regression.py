@@ -2,9 +2,9 @@ import numpy as np
 import scipy.signal
 import matplotlib.pyplot as plt
 
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+from keras import Sequential
+from keras.src.callbacks import ModelCheckpoint, EarlyStopping
+from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D
 
 from scikeras.wrappers import KerasRegressor
 from sklearn.model_selection import GridSearchCV
