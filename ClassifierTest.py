@@ -8,7 +8,7 @@ x_test, y_test = dataset.x_test, dataset.y_test
 
 
 # Initialize EEGClassifier object
-eeg_classifier = EEGClassifier(x_train, y_train, x_test, y_test, seglen)
+eeg_classifier = EEGClassifier(x_train, y_train, x_test, y_test)
 
 # Preprocess the data
 eeg_classifier.preprocess_data()
