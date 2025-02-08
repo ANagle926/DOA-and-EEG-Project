@@ -3,10 +3,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import Counter
 
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Bidirectional, Dropout, GlobalAveragePooling1D
-from tensorflow.keras.callbacks import ModelCheckpoint
-from tensorflow.keras.utils import to_categorical
+from keras import Sequential
+from keras.src.callbacks import ModelCheckpoint
+from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D
+from keras.src.utils import to_categorical
 
 from imblearn.over_sampling import SMOTE
 from scikeras.wrappers import KerasClassifier
