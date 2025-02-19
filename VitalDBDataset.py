@@ -114,16 +114,42 @@ class VitalDBDataset:
 
     def _finalize_data(self, x, y, b, c):
         """Converts lists to NumPy arrays and removes invalid samples."""
+
         x, y, b, c = map(np.array, (x, y, b, c))
 
         valid_mask = ~np.isnan(x).any(axis=1)
         valid_mask &= (np.nanmax(x, axis=1) - np.nanmin(x, axis=1) > 12)
+
+        print(f"x min: {np.min(x)}, x max: {np.max(x)}")
+        print(f"x abs max per row: {np.nanmax(np.abs(x), axis=1)[:10]}")  # Print first 10 rows
+        outliers = np.sum(np.abs(x) > 100)
+        print(f"Number of values beyond [-100, 100]: {outliers}")
+
         valid_mask &= (np.nanmax(np.abs(x), axis=1) < 100)
+        print(f"valid mask3 computed, shape: {valid_mask.shape}, sum: {np.sum(valid_mask)}")
+
+
+        # Print final mask summary
+        print(f"Final valid_mask shape: {valid_mask.shape}, sum: {np.sum(valid_mask)}")
 
         x, y, b, c = x[valid_mask], y[valid_mask], b[valid_mask], c[valid_mask]
 
         print(f'{100 * (1 - np.mean(valid_mask)):.1f}% samples removed')
         return x, y, b, c
+
+
+    """print("Currently finalizing")
+        x, y, b, c = map(np.array, (x, y, b, c))
+        valid_mask = ~np.isnan(x).any(axis=1)
+        valid_mask &= (np.nanmax(x, axis=1) - np.nanmin(x, axis=1) > 12)
+        print("valid mask2")
+        valid_mask &= (np.nanmax(np.abs(x), axis=1) < 100)
+        print("valid mask3")
+
+        x, y, b, c = x[valid_mask], y[valid_mask], b[valid_mask], c[valid_mask]
+
+        print(f'{100 * (1 - np.mean(valid_mask)):.1f}% samples removed')
+        return x, y, b, c"""
 
     def _split_data(self, x, y, b, c):
         """Splits data into training and test sets."""
