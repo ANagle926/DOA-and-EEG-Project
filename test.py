@@ -1,10 +1,12 @@
 import keras
+import psutil
+
 from Dataset2 import Dataset2
 from Regression import EEGRegressor
 from joblib import dump, load
 
 
-dataset = Dataset2(max_cases=60, srate=128)
+"""dataset = Dataset2(max_cases=60, srate=128)
 
 dump(dataset, "my_object.joblib")
 #dataset = load("my_object.joblib")
@@ -20,4 +22,14 @@ seglen = dataset.SEGLEN
 eeg_regressor = EEGRegressor(x_train, y_train, x_test, y_test, c_test, seglen)
 eeg_regressor.preprocess_data()
 eeg_regressor.model = keras.models.load_model("eeg_regressor.keras")
-eeg_regressor.plot_with_predictions()
+eeg_regressor.plot_with_predictions()"""
+
+from pympler import summary, muppy
+
+def print_memory_usage():
+    all_objects = muppy.get_objects()
+    sum1 = summary.summarize(all_objects)
+    summary.print_(sum1)
+
+print_memory_usage()
+print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
