@@ -145,7 +145,8 @@ class Dataset2:
         b_og = load("preprocess_b.joblib")
         c_og = load("preprocess_c.joblib")"""
 
-        x, b, c = self._finalize_data(load("preprocess_x.joblib"), load("preprocess_b.joblib"), load("preprocess_c.joblib"))
+        x, b, c = self._finalize_data(load("Data Files/preprocess_x.joblib"), load("Data Files/preprocess_b.joblib"), load(
+            "Data Files/preprocess_c.joblib"))
         print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 
         #x, b, c = self._finalize_data(x_og, b_og, c_og)
