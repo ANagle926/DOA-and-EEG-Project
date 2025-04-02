@@ -1,8 +1,9 @@
 from Classifier import EEGClassifier
-from VitalDBDataset import VitalDBDataset
+from VitalDBDataset import Dataset2
+
 
 # Load and process dataset
-dataset = VitalDBDataset(max_cases=500, srate=128)
+dataset = Dataset2(max_cases=100, srate=128)
 x_train, y_train = dataset.x_train, dataset.y_train
 x_test, y_test = dataset.x_test, dataset.y_test
 

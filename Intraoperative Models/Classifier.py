@@ -92,7 +92,7 @@ class EEGClassifier:
             validation_data=(self.x_test, self.y_test_cat),
             epochs=epochs,
             batch_size=batch_size,
-            callbacks=[ModelCheckpoint('Data Files/Model Versions/model.keras', save_best_only=True)]
+            callbacks=[ModelCheckpoint('../Data Files/Model Versions/model.keras', save_best_only=True)]
         )
 
     def hyperparameter_tuning(self):

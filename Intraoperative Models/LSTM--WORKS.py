@@ -4,7 +4,7 @@ import psutil
 from keras.src.utils.module_utils import scipy
 from matplotlib import pyplot as plt
 from joblib import dump, load
-from Dataset2 import Dataset2
+from VitalDBDataset import Dataset2
 from keras import Sequential
 from keras.src.callbacks import ModelCheckpoint, EarlyStopping
 from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D
@@ -14,7 +14,7 @@ from sklearn.metrics import mean_absolute_error, r2_score
 #print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 #dataset = Dataset2(max_cases=100, srate=128)
 #dump(dataset, "LSTM_data.joblib")
-dataset = load("Data Files/Model Versions/LSTM_data.joblib")
+dataset = load("../Data Files/Model Versions/LSTM_data.joblib")
 
 
 x_train, y_train = dataset.x_train, dataset.y_train
@@ -53,7 +53,7 @@ print(f"Test MAE: {test_mae}")
 
 #model.save("""LSTM_working_model.keras""")
 
-model= keras.models.load_model("Data Files/Model Versions/LSTM_working_model.keras")
+model= keras.models.load_model("../Data Files/Model Versions/LSTM_working_model.keras")
 
 pred_test = model.predict(x_test).flatten()
 
