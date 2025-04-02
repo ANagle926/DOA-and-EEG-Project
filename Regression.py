@@ -2,10 +2,12 @@ import keras
 import numpy as np
 import scipy.signal
 import matplotlib.pyplot as plt
+from imblearn.tensorflow.tests.test_generator import tf
 
 from keras import Sequential
 from keras.src.callbacks import ModelCheckpoint, EarlyStopping, Callback
-from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D
+from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D, LayerNormalization, \
+    GlobalMaxPooling1D
 from keras.src.optimizers import Adam
 
 from scikeras.wrappers import KerasRegressor
@@ -43,7 +45,7 @@ class EEGRegressor:
 
     def create_model(self, units=64, dropout=0.5, reg_strength=0.001, learning_rate=0.001):
 
-        model = Sequential([
+        """model = Sequential([
             LSTM(units, return_sequences=True, input_shape=(self.seglen, 1)),
             Dense(64, activation='relu'),
             Dropout(dropout),
@@ -54,7 +56,21 @@ class EEGRegressor:
             Dropout(dropout),
             Dense(64, activation='relu'),
             Dense(1)
+        ])"""
+        model = Sequential([
+            Bidirectional(LSTM(units, return_sequences=True, input_shape=(self.seglen, 1))),
+            LayerNormalization(),  # Stabilizes LSTM output
+            LSTM(32, return_sequences=True),  # Extra LSTM for better feature extraction
+            Dense(64, activation=tf.nn.swish),
+            LayerNormalization(),
+            Bidirectional(LSTM(64, return_sequences=True, kernel_regularizer=keras.regularizers.l2(reg_strength))),
+            GlobalMaxPooling1D(),  # Reduces variance in pooling
+            Dense(64, activation=tf.nn.swish, kernel_regularizer=keras.regularizers.l2(reg_strength)),  # Reduced Dense size
+            Dropout(dropout),
+            Dense(64, activation=tf.nn.swish),
+            Dense(1)
         ])
+
 
         optimizer = Adam(learning_rate=learning_rate)  # Use learning_rate from GridSearch
         model.compile(loss='mae', optimizer=optimizer, metrics=['mae'])
@@ -81,10 +97,10 @@ class EEGRegressor:
         print("KerasRegressor initialized.")
 
         param_grid = {
-            'model__units': [64],
-            'model__dropout': [0.2],
-            'model__reg_strength': [0.0005, 0.0007],
-            'model__learning_rate': [0.0006, 0.0008],
+            'model__units': [90],
+            'model__dropout': [0.1, 0.15],
+            'model__reg_strength': [0.0005],
+            'model__learning_rate': [0.0005],
             'batch_size': [128],
             'epochs': [15]
         }
