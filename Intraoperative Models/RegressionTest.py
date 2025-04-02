@@ -1,10 +1,9 @@
-from Dataset2 import Dataset2
 from Regression import EEGRegressor
-from joblib import dump, load
+from joblib import load
 
 
 #dataset = Dataset2(max_cases=100, srate=128)
-dataset = load("Data Files/Model Versions/LSTM_data.joblib")
+dataset = load("../Data Files/Model Versions/LSTM_data.joblib")
 x_train, y_train = dataset.x_train, dataset.y_train
 x_test, y_test = dataset.x_test, dataset.y_test
 c_train, c_test = dataset.c_train, dataset.c_test
