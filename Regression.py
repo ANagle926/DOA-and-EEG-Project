@@ -86,7 +86,7 @@ class EEGRegressor:
             validation_data=(self.x_test_resampled, self.y_test),
             epochs=epochs,
             batch_size=batch_size,
-            callbacks=[ModelCheckpoint('model.keras', save_best_only=True),
+            callbacks=[ModelCheckpoint('Data Files/Model Versions/model.keras', save_best_only=True),
                        EarlyStopping(patience=3, restore_best_weights=True)]
         )
 
