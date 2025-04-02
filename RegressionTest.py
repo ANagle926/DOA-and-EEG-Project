@@ -17,7 +17,7 @@ eeg_regressor = EEGRegressor(x_train, y_train, x_test, y_test, c_test, seglen)
 # Preprocess the data
 eeg_regressor.preprocess_data()
 
-
+"""
 # Perform hyperparameter tuning
 best_params= eeg_regressor.hyperparameter_tuning()
 
@@ -41,6 +41,11 @@ print("best batch size:", best_batch_size)
 eeg_regressor.model = eeg_regressor.create_model(units=best_units, dropout=best_dropout, reg_strength=best_reg_strength, learning_rate=best_learning_rate)
 eeg_regressor.train_model(epochs=best_epochs, batch_size=best_batch_size)
 eeg_regressor.model.save("eeg_regressor_v2.keras")
+"""
+
+eeg_regressor.model = eeg_regressor.create_model(units=64, dropout=0.2, reg_strength=0.0005, learning_rate=0.0005)
+eeg_regressor.train_model(epochs=10, batch_size=128)
+eeg_regressor.model.save("eeg_regressor_v3.keras")
 
 # Evaluate the model performance
 test_mae, r2 = eeg_regressor.evaluate_model()
