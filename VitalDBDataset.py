@@ -1,17 +1,12 @@
+import os
+
 import numpy as np
 import pandas as pd
 import vitaldb
-import sys
 from joblib import dump, load
 import psutil
 
-def filter_large_array(arr, mask, chunk_size=10000):
-    filtered = []
-    for i in range(0, arr.shape[0], chunk_size):
-        filtered.append(arr[i:i + chunk_size][mask[i:i + chunk_size]])
-    return np.vstack(filtered)
-
-class Dataset2:
+class VitalDBDataset:
     def __init__(self, max_cases=100, srate=128):
         self.SRATE = srate
         self.SEGLEN = 4 * self.SRATE  # 4-second segments
@@ -26,6 +21,7 @@ class Dataset2:
 
     def load_data(self):
         """Loads and processes EEG and MAC data from VitalDB."""
+
         """df_trks = pd.read_csv("https://api.vitaldb.net/trks")
         df_cases = pd.read_csv("https://api.vitaldb.net/cases")
 
@@ -135,21 +131,19 @@ class Dataset2:
             icase += 1
             print(f'{len(y) - oldlen} samples read, total {len(y)} samples')
 
-        dump(x, "preprocess_x.joblib")
-        dump(y, "preprocess_y.joblib")
-        dump(b, "preprocess_b.joblib")
-        dump(c, "preprocess_c.joblib")"""
 
-        """x_og = load("preprocess_x.joblib")
-        #y_og = load("preprocess_y.joblib")
-        b_og = load("preprocess_b.joblib")
-        c_og = load("preprocess_c.joblib")"""
+        x, b, c = self._finalize_data(x,b,c)
 
-        x, b, c = self._finalize_data(load("Data Files/preprocess_x.joblib"), load("Data Files/preprocess_b.joblib"), load(
-            "Data Files/preprocess_c.joblib"))
-        print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
+        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
+        dump(b, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_b.joblib")
+        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_c.joblib")"""
 
-        #x, b, c = self._finalize_data(x_og, b_og, c_og)
+        x=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
+        b=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_b.joblib")
+        c=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_c.joblib")
+
+        #Insert AI filter here
+
         self._split_data(x, b, c)
 
 
@@ -158,8 +152,6 @@ class Dataset2:
         Converts lists to NumPy arrays and removes invalid samples.
         Now processes data in chunks to avoid memory overload and helps debug outliers.
         """
-        print("starting to finalize data")
-        print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 
         x_masked = np.array(x_og, dtype=np.float32)
         del x_og
@@ -169,7 +161,6 @@ class Dataset2:
         del c_og
         import gc
         gc.collect()
-        print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 
         # Initialize outlier counter
         outliers = 0
@@ -184,6 +175,7 @@ class Dataset2:
 
             # Apply the first condition: (max - min) > 12 for the current chunk
             valid_mask_chunk &= (np.nanmax(chunk, axis=1) - np.nanmin(chunk, axis=1) > 12)
+
             # Check for outliers: absolute values beyond the threshold
             abs_max = np.nanmax(np.abs(chunk), axis=1)
             outliers_in_chunk = np.sum(abs_max > threshold)
@@ -200,36 +192,12 @@ class Dataset2:
                 print(f"Chunk {i}-{i+chunk_size-1}: Found {outliers_in_chunk} outliers, valid mask size: {valid_mask_chunk.sum()}")
 
 
-        """print(f"Valid mask sum: {valid_mask.sum()} / {len(valid_mask)}")
-        print(f"Valid mask (first 10 values): {valid_mask[:10]}")
-        print(f"x.shape: {x.shape}, valid_mask.shape: {valid_mask.shape}")
-        print(f"Size of x before filtering: {sys.getsizeof(x)} bytes")
-        print(f"NaN count in x: {np.isnan(x).sum()}")
-        print(f"Inf count in x: {np.isinf(x).sum()}")"""
-
-        x_og = None  # Explicitly free large variables
-        b_og = None
-        c_og = None
-        valid_mask_chunk = None
-        outliers_in_chunk = None
-        outliers = None
-        chunk = None
-        gc.collect()
-
-        print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
-
-        x = x_masked[np.where(valid_mask)]
-        b = b_masked[np.where(valid_mask)]
-        c = c_masked[np.where(valid_mask)]
-        gc.collect()
-
         print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 
         # Apply the valid mask to exclude invalid samples
-        """x = x[valid_mask]
-        y = y[valid_mask]
-        b = b[valid_mask]
-        c = c[valid_mask]"""
+        x = x_masked[np.where(valid_mask)]
+        b = b_masked[np.where(valid_mask)]
+        c = c_masked[np.where(valid_mask)]
 
         print(f"Total outliers found: {outliers}")
         print(f'{100 * (1 - np.mean(valid_mask)):.1f}% samples removed')
