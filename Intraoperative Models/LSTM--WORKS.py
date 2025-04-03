@@ -13,8 +13,8 @@ from sklearn.metrics import mean_absolute_error, r2_score
 
 #print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 #dataset = Dataset2(max_cases=100, srate=128)
-#dump(dataset, "LSTM_data.joblib")
-dataset = load("../Data Files/Model Versions/LSTM_data.joblib")
+#dump(dataset, "Pre_processed_Data.joblib")
+dataset = load("Pre_processed_Data.joblib")
 
 
 x_train, y_train = dataset.x_train, dataset.y_train

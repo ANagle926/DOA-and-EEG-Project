@@ -31,12 +31,14 @@ class EEGRegressor:
 
         self.seglen = seglen  # Segment length (SEGLEN)
 
-        # Preprocessed data
+        # Creating variables
         self.x_train_resampled = None
+        self.x_test_resampled = None
         self.y_train_resampled = None
-
-        # Final model
+        self.y_test_resampled = None
         self.model = None
+
+        self.preprocess_data()
 
     def preprocess_data(self):
 
@@ -45,7 +47,7 @@ class EEGRegressor:
 
     def create_model(self, units=64, dropout=0.5, reg_strength=0.001, learning_rate=0.001):
 
-        """model = Sequential([
+        model = Sequential([
             LSTM(units, return_sequences=True, input_shape=(self.seglen, 1)),
             Dense(64, activation='relu'),
             Dropout(dropout),
@@ -56,7 +58,8 @@ class EEGRegressor:
             Dropout(dropout),
             Dense(64, activation='relu'),
             Dense(1)
-        ])"""
+        ])
+        """
         model = Sequential([
             Bidirectional(LSTM(units, return_sequences=True, input_shape=(self.seglen, 1))),
             LayerNormalization(),  # Stabilizes LSTM output
@@ -69,7 +72,7 @@ class EEGRegressor:
             Dropout(dropout),
             Dense(64, activation=tf.nn.swish),
             Dense(1)
-        ])
+        ])"""
 
 
         optimizer = Adam(learning_rate=learning_rate)  # Use learning_rate from GridSearch
