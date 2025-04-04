@@ -6,6 +6,9 @@ import vitaldb
 from joblib import dump, load
 import psutil
 
+from DataProcessingCNNV2 import DataProcessing
+
+
 class VitalDBDataset:
     def __init__(self, max_cases=100, srate=128):
         self.SRATE = srate
@@ -143,6 +146,12 @@ class VitalDBDataset:
         c=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_c.joblib")
 
         #Insert AI filter here
+        data_processor = DataProcessing(x_eeg=x, y_doa=b, case_id=c)
+        x=data_processor.cleaned_eeg
+        b=data_processor.cleaned_y
+        c=data_processor.cleaned_case_id
+        print("x shape is", x.shape)
+        print("y shape is", b.shape)
 
         self._split_data(x, b, c)
 
