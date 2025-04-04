@@ -12,16 +12,32 @@ from joblib import dump, load
 # Load data
 y_doa = joblib.load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_b.joblib")
 x_eeg = joblib.load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
-x_eeg = x_eeg.reshape((x_eeg.shape[0], x_eeg.shape[1], 1))  # Reshape for Conv1D input
-data = x_eeg
 
-std_threshold = 3
-fft_threshold = 11000
+#8280
+def is_noisy(sample, std_threshold=10, fft_threshold=12000, amplitude_change_threshold=0.3):
+    # Statistical Method (Standard Deviation)
+    std_dev = np.std(sample)  # Standard deviation of the sample
 
-def is_noisy(sample):
-    std_dev = np.std(sample)
-    fft_value = np.sum(np.abs(np.fft.fft(sample)))
-    return (std_dev > std_threshold) or (fft_value > fft_threshold)
+    # Frequency Domain Method (Fourier Transform)
+    n = len(sample)  # Number of samples in the segment
+    fft_values = np.abs(np.fft.fft(sample))  # Fourier Transform of the segment
+    fft_values = fft_values[:n // 2]  # Only take the positive frequencies
+    max_freq_component = np.max(fft_values)  # Maximum frequency component
+
+    # Amplitude Change Detection
+    # Calculate the absolute difference in amplitude between consecutive samples
+    amplitude_changes = np.abs(np.diff(sample))
+    mean_amplitude_change = np.mean(amplitude_changes)  # Average change in amplitude
+    low_amplitude_change = mean_amplitude_change < amplitude_change_threshold
+
+    # Check if the sample is noisy based on both criteria
+    is_noisy_flag = (std_dev > std_threshold and max_freq_component > fft_threshold) or low_amplitude_change
+
+    # Debugging information
+    if is_noisy_flag:
+        print(f"Detected noisy sample: std_dev={std_dev}, max_freq_component={max_freq_component}")
+
+    return is_noisy_flag
 
 def create_model():
     model = Sequential([
@@ -66,53 +82,52 @@ def visualize_noise_analysis(cleaned_data, noisy_indices, data, y):
     plt.figure(figsize=(16, 10))
 
     # Distribution of Noisy vs. Clean Samples
-    plt.subplot(2, 2, 1)
-    labels = ['Clean', 'Noisy']
+    """labels = ['Clean', 'Noisy']
     counts = [len(cleaned_data), len(noisy_indices)]
     plt.bar(labels, counts, color=['green', 'red'])
     plt.title('Distribution of Clean vs. Noisy Samples')
     plt.xlabel('Sample Type')
     plt.ylabel('Count')
+    plt.show()
 
-    # Signal Amplitude Comparison
-    plt.subplot(2, 2, 2)
+    plt.figure(figsize=(15, min(10, len([0, 1, 2]) * 3)))  # Adjust the figure size based on the number of comparisons
+# Signal Amplitude Comparison
     for i in range(3):
         plt.plot(cleaned_data[i], label=f'Clean {i+1}', color='green')
-        plt.plot(data[noisy_indices[i]], label=f'Noisy {i+1}', color='red', linestyle='--')
+        plt.plot(data[noisy_indices[i]], label=f'Noisy {i+1}', color='red')
     plt.title('Signal Amplitude: Clean vs. Noisy')
     plt.xlabel('Time')
     plt.ylabel('Amplitude')
     plt.legend()
+    plt.tight_layout()
+    plt.show()"""
 
-    # Signal Spectrum (FFT) Comparison
-    plt.subplot(2, 2, 3)
-    for i in range(3):
-        fft_clean = np.abs(np.fft.fft(cleaned_data[i]))
-        fft_noisy = np.abs(np.fft.fft(data[noisy_indices[i]]))
-        plt.plot(fft_clean, label=f'Clean FFT {i+1}', color='green')
-        plt.plot(fft_noisy, label=f'Noisy FFT {i+1}', color='red', linestyle='--')
-    plt.title('Frequency Spectrum: Clean vs. Noisy')
-    plt.xlabel('Frequency')
-    plt.ylabel('Magnitude')
-    plt.legend()
 
-    # Heatmap of Noisy Signal Positions
-    plt.subplot(2, 2, 4)
-    heatmap = np.zeros(len(y))
-    heatmap[noisy_indices] = 1
-    plt.imshow([heatmap], cmap='hot', aspect='auto')
-    plt.title('Heatmap of Noisy Signal Positions')
-    plt.xlabel('Sample Index')
-    plt.ylabel('Noise Presence')
+    plt.figure(figsize=(15, min(10, len([0, 1, 2]) * 3)))  # Adjust the figure size based on the number of comparisons
 
+    #Time Domain Comparison of Clean vs Noisy Signals
+    for i, idx in enumerate([0, 100, 200, 300, 350]):  # You can modify the number of samples you want to compare
+        plt.subplot(len([0, 1, 2, 3, 4]), 1, i + 1)
+
+        # Clean signal
+        plt.plot(cleaned_data[idx], label=f'Clean Signal {idx + 1}', color='green')
+        # Noisy signal
+        plt.plot(data[noisy_indices[idx]], label=f'Noisy Signal {idx + 1}', color='red')
+
+        plt.title(f'Comparison of Clean vs Noisy Signal {idx + 1}')
+        plt.xlabel('Time (Samples)')
+        plt.ylabel('Amplitude')
+        plt.legend()
     plt.tight_layout()
     plt.show()
 
-#too many noisy samples for whatever reason => look at identify_noise, thats the correct amount (1/3)
+
 
 #Prepare train/test data
-labels = np.array([1 if is_noisy(sample) else 0 for sample in data])
-X_train, X_test, y_train, y_test = train_test_split(data, labels, test_size=0.2, random_state=42)
+"""labels = np.array([1 if is_noisy(sample) else 0 for sample in x_eeg])
+noisy_count = np.sum(labels)
+print(f"Total noisy samples detected: {noisy_count}")
+X_train, X_test, y_train, y_test = train_test_split(x_eeg, labels, test_size=0.1, random_state=42)
 
 # Apply SMOTE for class imbalance
 smote = SMOTE(random_state=42)
@@ -129,9 +144,9 @@ dump(model, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/
 
 #make predictions on testing set
 y_pred = (model.predict(X_test) > 0.5).astype(int)
-print(f"Test Accuracy: {accuracy_score(y_test, y_pred)}")
+print(f"Test Accuracy: {accuracy_score(y_test, y_pred)}")"""
 
-#model= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/data_processing.joblib")
+model= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/data_processing.joblib")
 
 cleaned_x, cleaned_y, noisy_indices = filter_noisy_data(x_eeg, y_doa, model)
 visualize_noise_analysis(cleaned_x, noisy_indices, x_eeg, y_doa)

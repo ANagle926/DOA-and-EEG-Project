@@ -27,7 +27,7 @@ plt.ylabel("Frequency")
 plt.show()"""
 
 # Function to identify noisy segments using both statistical and frequency domain methods
-def identify_noisy_segments(data, std_threshold=3, fft_threshold=11000):
+def identify_noisy_segments(data, std_threshold=10, fft_threshold=12000, amplitude_change_threshold=0.3):
     # List to store indices of noisy segments
     noisy_segments = []
 
@@ -38,13 +38,21 @@ def identify_noisy_segments(data, std_threshold=3, fft_threshold=11000):
 
         # Frequency Domain Method (Fourier Transform)
         n = len(segment)  # Number of samples in the segment
-        frequencies = fftfreq(n)  # Frequency bins
         fft_values = np.abs(fft(segment))  # Fourier Transform of the segment
         fft_values = fft_values[:n // 2]  # Only take the positive frequencies
         max_freq_component = np.max(fft_values)  # Maximum frequency component
 
-        # Check if segment is noisy based on both criteria
-        if std_dev > std_threshold and max_freq_component > fft_threshold:
+        # Amplitude Change Detection
+        # Calculate the absolute difference in amplitude between consecutive samples
+        amplitude_changes = np.abs(np.diff(segment))
+        mean_amplitude_change = np.mean(amplitude_changes)  # Average change in amplitude
+
+        # Flag as noisy if the amplitude change is too small over the sample
+        low_amplitude_change = mean_amplitude_change < amplitude_change_threshold
+
+
+# Check if segment is noisy based on both criteria
+        if (std_dev > std_threshold and max_freq_component > fft_threshold) or low_amplitude_change:
             noisy_segments.append(idx)
 
     return noisy_segments
@@ -58,7 +66,7 @@ def visualize_noisy_segments(data, noisy_segments):
     # Plot the noisy segments
     plt.figure(figsize=(15, min(10, num_noisy * 3)))  # Adjust the figure size based on the number of noisy segments
     for i, idx in enumerate(noisy_segments[:5]):  # Limit to first 5 noisy segments for visualization
-        plt.subplot(min(5, num_noisy), 1, i + 1)  # Adjust the subplot grid to fit noisy segments
+        plt.subplot(min(5, num_noisy), 1, i + 1)
         plt.plot(data[idx])
         plt.title(f"EEG Segment {idx} (Noisy)")
         plt.xlabel("Time")
@@ -66,6 +74,7 @@ def visualize_noisy_segments(data, noisy_segments):
 
     plt.tight_layout()
     plt.show()
+
 
 # Identify noisy segments based on both statistical and frequency domain methods
 noisy_segments = identify_noisy_segments(x)
