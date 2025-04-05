@@ -3,6 +3,9 @@ from joblib import load
 from matplotlib import pyplot as plt
 from numpy.fft import fft, fftfreq
 
+#Number of clean samples: 56037
+#Number of noisy samples: 8820
+
 x=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
 print(x.shape)
 
@@ -27,7 +30,7 @@ plt.ylabel("Frequency")
 plt.show()"""
 
 # Function to identify noisy segments using both statistical and frequency domain methods
-def identify_noisy_segments(data, std_threshold=10, fft_threshold=12000, amplitude_change_threshold=0.3):
+def identify_noisy_segments(data, std_threshold=13, fft_threshold=14000, amplitude_change_threshold=0.2):
     # List to store indices of noisy segments
     noisy_segments = []
 
