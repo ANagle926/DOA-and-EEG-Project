@@ -14,9 +14,10 @@ from joblib import dump, load
 #x_eeg = joblib.load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
 
 class DataProcessing:
-    def __init__(self, x_eeg, y_doa, case_id, std_threshold=10, fft_threshold=12000, amplitude_change_threshold=0.3):
+    def __init__(self, x_eeg, y_doa, case_id, std_threshold=13, fft_threshold=14000, amplitude_change_threshold=0.3):
         self.x_eeg = x_eeg
         self.y_doa = y_doa
+        print("x_eeg shape is", x_eeg.shape)
         self.case_id = case_id
         self.std_threshold = std_threshold
         self.fft_threshold = fft_threshold
@@ -26,7 +27,7 @@ class DataProcessing:
         self.cleaned_y=None
         self.cleaned_case_id=None
 
-        #self.prepare_model()
+        self.prepare_model()
 
         model= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/data_processing.joblib")
         noisy_indices = self.filter_noisy_data(model)
@@ -101,7 +102,8 @@ class DataProcessing:
         # Predict noisy or clean using the model
         predictions = model.predict(self.x_eeg)
         predicted_labels = (predictions >= threshold).astype(int)
-
+        print("x_eeg shape at filter_noisy_data is", self.x_eeg.shape)
+        print("label shape is", predicted_labels.shape)
         self.cleaned_eeg = []
         self.cleaned_y = []
         self.cleaned_case_id = []
