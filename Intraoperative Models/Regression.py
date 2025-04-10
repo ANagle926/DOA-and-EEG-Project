@@ -45,7 +45,7 @@ class EEGRegressor:
         self.x_train_resampled = self.x_train.reshape(-1, self.seglen, 1)
         self.x_test_resampled = self.x_test.reshape(-1, self.seglen, 1)
 
-    def create_model(self, units=64, dropout=0.5, reg_strength=0.001, learning_rate=0.001):
+    def create_model(self, units=64, dropout=0.4, reg_strength=0.001, learning_rate=0.001):
 
         model = Sequential([
             LSTM(units, return_sequences=True, input_shape=(self.seglen, 1)),
@@ -53,10 +53,10 @@ class EEGRegressor:
             Dropout(dropout),
             Bidirectional(LSTM(64, return_sequences=True, input_shape=(self.seglen, 1), kernel_regularizer=keras.regularizers.l2(reg_strength))),
             GlobalAveragePooling1D(),
+            #remove below line?
+            Dense(128, activation='relu'),
             Dropout(dropout),
-            Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(reg_strength)),
-            Dropout(dropout),
-            Dense(64, activation='relu'),
+            Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(reg_strength)),
             Dense(1)
         ])
         """

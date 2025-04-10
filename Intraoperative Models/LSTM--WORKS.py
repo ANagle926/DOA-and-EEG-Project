@@ -4,56 +4,77 @@ import psutil
 from keras.src.utils.module_utils import scipy
 from matplotlib import pyplot as plt
 from joblib import dump, load
-from VitalDBDataset import Dataset2
+from VitalDBDataset import VitalDBDataset
 from keras import Sequential
 from keras.src.callbacks import ModelCheckpoint, EarlyStopping
-from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D
-
+from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D, Flatten
 from sklearn.metrics import mean_absolute_error, r2_score
 
-#print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
-#dataset = Dataset2(max_cases=100, srate=128)
-#dump(dataset, "Pre_processed_Data.joblib")
-dataset = load("Pre_processed_Data.joblib")
 
+dataset = VitalDBDataset(max_cases=3, srate=128)
+dump(dataset, "Pre_processed_Data.joblib")
+#dataset = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset.joblib")
 
 x_train, y_train = dataset.x_train, dataset.y_train
 x_test, y_test = dataset.x_test, dataset.y_test
 c_train, c_test = dataset.c_train, dataset.c_test
-seglen = dataset.SEGLEN
+seglen=dataset.SEGLEN
 
-"""model = Sequential()
-model.add(LSTM(64,return_sequences=True))
-model.add(Dense(64, activation='relu'))
-model.add(Dropout(0.3))
-model.add(Bidirectional(LSTM(64, return_sequences=True)))
-model.add(GlobalAveragePooling1D())
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.4))
-model.add(Dense(64))
-model.add(Dense(1))
+print("x_train shape:", x_train.shape)
+print("y_train shape:", y_train.shape)
+print("x_test shape:", x_test.shape)
+print("y_test shape:", y_test.shape)
+
+
+"""from scipy.fft import fft
+
+# Take FFT of each wave
+fft_features = np.abs(fft(x_train, axis=1))[:, :100, 0]  # First 100 frequency bins
+
+# Use a simple model
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import train_test_split
+
+X_train, X_val, y_train_small, y_val = train_test_split(fft_features, y_train, test_size=0.2, random_state=42)
+model = Ridge()
+model.fit(X_train, y_train_small)
+print("Validation MAE:", np.mean(np.abs(model.predict(X_val) - y_val)))"""
+
+"""model = Sequential([
+    LSTM(64, return_sequences=True, input_shape=(seglen, 1)),
+    Dense(64, activation='relu'),
+    Dropout(0.3),
+    Bidirectional(LSTM(128, return_sequences=True)),
+    GlobalAveragePooling1D(),
+    Dense(128, activation='relu'),
+    Dropout(0.4),
+    Dense(64, activation='relu'),
+    Dense(1)
+])
+
 model.compile(loss='mean_absolute_error', optimizer='adam', metrics=['mean_absolute_error'])
-print("here")
+model.summary()
+
 model.fit(
     x_train, y_train,
     validation_data=(x_test, y_test),
-    epochs=10,
-    batch_size=256,
+    epochs=15,
+    batch_size=128,
     callbacks=[
         ModelCheckpoint('model.keras', save_best_only=True),
         EarlyStopping(patience=3, restore_best_weights=True)
     ]
-)"""
+)
 
-"""
+dump(model, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/LSTM_working_model_with_filter.joblib" )
+
 test_loss, test_mae = model.evaluate(x_test, y_test)
-print(f"Test accuracy: {test_loss}")
+print(f"Test Loss (MAE): {test_loss}")
 print(f"Test MAE: {test_mae}")
-"""
 
-#model.save("""LSTM_working_model.keras""")
 
-model= keras.models.load_model("../Data Files/Model Versions/LSTM_working_model.keras")
+#model.save(""LSTM_working_model.keras"")
+#model= keras.models.load_model("../Data Files/Model Versions/LSTM_working_model.keras")
 
 pred_test = model.predict(x_test).flatten()
 
@@ -95,9 +116,7 @@ for caseid in np.random.choice(np.unique(c_test), size=3, replace=False):
     plt.ylabel('DOA')
     plt.title(f'Case {caseid}')
     plt.show()
-    print(f'Case {caseid}, DOA: {our_mae:.4f}')
-
-
+    print(f'Case {caseid}, DOA: {our_mae:.4f}')"""
 
 """y_pred = model.predict(x_test).flatten()
 mae = mean_absolute_error(y_test, y_pred)
