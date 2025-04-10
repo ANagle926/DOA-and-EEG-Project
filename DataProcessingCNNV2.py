@@ -27,7 +27,7 @@ class DataProcessing:
         self.cleaned_y=None
         self.cleaned_case_id=None
 
-        self.prepare_model()
+        #self.prepare_model()
 
         model= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/data_processing.joblib")
         noisy_indices = self.filter_noisy_data(model)
@@ -127,7 +127,6 @@ class DataProcessing:
         return noisy_indices
 
     def visualize_noise_analysis(self, noisy_indices):
-        plt.figure(figsize=(16, 10))
 
         # Distribution of Noisy vs. Clean Samples
         """labels = ['Clean', 'Noisy']
@@ -154,8 +153,8 @@ class DataProcessing:
         plt.figure(figsize=(15, min(10, len([0, 1, 2]) * 3)))  # Adjust the figure size based on the number of comparisons
 
         #Time Domain Comparison of Clean vs Noisy Signals
-        for i, idx in enumerate([0, 100, 200, 300, 350]):  # You can modify the number of samples you want to compare
-            plt.subplot(len([0, 1, 2, 3, 4]), 1, i + 1)
+        for i, idx in enumerate([0, 10, 15]):  # You can modify the number of samples you want to compare
+            plt.subplot(len([0, 1, 2]), 1, i + 1)
 
             # Clean signal
             plt.plot(self.cleaned_eeg[idx], label=f'Clean Signal {idx + 1}', color='green')
