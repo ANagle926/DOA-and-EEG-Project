@@ -14,7 +14,7 @@ from joblib import dump, load
 #x_eeg = joblib.load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
 
 class DataProcessing:
-    def __init__(self, x_eeg, y_doa, case_id, std_threshold=13, fft_threshold=14000, amplitude_change_threshold=0.3):
+    def __init__(self, x_eeg, y_doa, case_id, std_threshold=14, fft_threshold=9000, amplitude_change_threshold=0.2):
         self.x_eeg = x_eeg
         self.y_doa = y_doa
         print("x_eeg shape is", x_eeg.shape)
@@ -27,6 +27,7 @@ class DataProcessing:
         self.cleaned_y=None
         self.cleaned_case_id=None
 
+        #can comment out once trained appropriately
         #self.prepare_model()
 
         model= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/data_processing.joblib")
@@ -150,7 +151,7 @@ class DataProcessing:
         plt.show()"""
 
 
-        plt.figure(figsize=(15, min(10, len([0, 1, 2]) * 3)))  # Adjust the figure size based on the number of comparisons
+        """plt.figure(figsize=(15, min(10, len([0, 1, 2]) * 3)))  # Adjust the figure size based on the number of comparisons
 
         #Time Domain Comparison of Clean vs Noisy Signals
         for i, idx in enumerate([0, 10, 15]):  # You can modify the number of samples you want to compare
@@ -166,5 +167,5 @@ class DataProcessing:
             plt.ylabel('Amplitude')
             plt.legend()
         plt.tight_layout()
-        plt.show()
+        plt.show()"""
 

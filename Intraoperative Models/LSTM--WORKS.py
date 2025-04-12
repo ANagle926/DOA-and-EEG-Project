@@ -11,8 +11,9 @@ from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAverageP
 from sklearn.metrics import mean_absolute_error, r2_score
 
 
-dataset = VitalDBDataset(max_cases=3, srate=128)
+dataset = VitalDBDataset(max_cases=5, srate=128)
 dump(dataset, "Pre_processed_Data.joblib")
+print("done saving dataset")
 #dataset = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset.joblib")
 
 x_train, y_train = dataset.x_train, dataset.y_train
@@ -40,7 +41,7 @@ model = Ridge()
 model.fit(X_train, y_train_small)
 print("Validation MAE:", np.mean(np.abs(model.predict(X_val) - y_val)))"""
 
-"""model = Sequential([
+model = Sequential([
     LSTM(64, return_sequences=True, input_shape=(seglen, 1)),
     Dense(64, activation='relu'),
     Dropout(0.3),
@@ -116,7 +117,7 @@ for caseid in np.random.choice(np.unique(c_test), size=3, replace=False):
     plt.ylabel('DOA')
     plt.title(f'Case {caseid}')
     plt.show()
-    print(f'Case {caseid}, DOA: {our_mae:.4f}')"""
+    print(f'Case {caseid}, DOA: {our_mae:.4f}')
 
 """y_pred = model.predict(x_test).flatten()
 mae = mean_absolute_error(y_test, y_pred)
