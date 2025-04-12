@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
+import psutil
 import vitaldb
 from joblib import dump, load, Parallel, delayed
-import psutil
 from matplotlib import pyplot as plt
 from scipy.stats import pearsonr
 
@@ -25,24 +25,22 @@ import time
 #0.03 with 2,1... BRO WTH
 #0.14 with 2,1
 def apply_eemd_to_wave(wave):
-    max_imfs = 8
-    discard_first_n = 2
-    discard_last_n = 2
     noise_std = 0.03
 
     eemd = EEMD()
     eemd.noise_width = noise_std
     imfs = eemd.eemd(wave)
 
-    if imfs.shape[0] > max_imfs:
-        imfs = imfs[:max_imfs]
+    kept_imfs = imfs[:3]
 
-    kept_imfs = imfs[discard_first_n:imfs.shape[0] - discard_last_n]
+    # Handle edge cases
+    if kept_imfs.shape[0] < 3:
+        # Pad with zeros if less than 3 IMFs
+        pad = np.zeros((3 - kept_imfs.shape[0], wave.shape[0]))
+        kept_imfs = np.vstack([kept_imfs, pad])
 
-    if kept_imfs.size == 0:
-        return np.zeros_like(wave)
-
-    return np.sum(kept_imfs, axis=0)
+    # Transpose to shape (125, 3) for each sample
+    return kept_imfs[:3].T
 
 def process_dataset_eemd(x_data, n_jobs=6):
     print("⚙️ Starting parallel EEMD processing...")
@@ -61,7 +59,7 @@ def process_dataset_eemd(x_data, n_jobs=6):
 
     total_time = time.time() - start_time
     print(f"✅ Done processing {len(x_data)} samples in {total_time:.2f} seconds.")
-    return np.array(processed)[..., np.newaxis]
+    return np.array(processed)  # shape: (samples, 125, 3)
 
 
 class VitalDBDataset:
@@ -80,28 +78,28 @@ class VitalDBDataset:
     def process_data(self):
 
         x,y,b,c= self.load_data()
-        x, b, c = self.remove_invalid_samples(x,b,c)
-        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter.joblib")
-        dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/y_data_without_filter.joblib")
+        x, b, c = self.remove_invalid_samples(x[:500],b[:500],c[:500])
+        #self.calculate_correlation(x, b, name="before processing")
+
+        dump(x, "x_data_without_filter.joblib")
+        dump(b,"y_data_without_filter.joblib")
 
 
-        self.calculate_correlation(x, b, name="before processing") #mean correlation is 0.11
-        x, b, c= self.apply_AI_filter(x, b, c)
-        x_og=x
-        self.calculate_correlation(x, b, name="after AI filter") #mean correlation is 0.22
+        #x, b, c= self.apply_AI_filter(x, b, c)
+        #self.calculate_correlation(x, b, name="after AI filter")
         x=self.apply_EEMD_filter(x)
-        self.calculate_correlation(x, b, name = "after eemd filter") #mean correlation is 0.43!!
+        #self.calculate_correlation(x, b, name = "after eemd filter")
 
-        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
-        dump(b, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_b.joblib")
-        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_c.joblib")
+        dump(x, "postprocess_x.joblib")
+        dump(b, "postprocess_b.joblib")
+        dump(c, "postprocess_c.joblib")
+
         print("finished saving EEMD Data")
 
         #x=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
         #b=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_b.joblib")
         #c=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_c.joblib")
 
-        self.plot_eemd_and_without_eemd_comparison(x_og)
         self.visualize_imfs(x)
         self.split_data_v2_temporary(x, b, c)
         print("done splitting data")
@@ -109,15 +107,21 @@ class VitalDBDataset:
         #self.x_train = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_train_after_eemd.joblib")
         #self.x_test = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_test_after_eemd.joblib")
 
-        #self.visualize_imfs()
-        #self.plot_eemd_and_without_eemd_comparison(load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib"))
-
     def apply_EEMD_filter(self, x):
         x= process_dataset_eemd(x)
-        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
+        print(f"✅ Preprocessed shape: {x.shape}")
+
+        # Reshape for scaling: (samples * 125, 3)
+        reshaped = x.reshape(-1, 3)
+
         scaler = StandardScaler()
-        x = scaler.fit_transform(x.reshape(-1, 512)).reshape(-1, 512, 1)
-        return x
+        scaled = scaler.fit_transform(reshaped)
+
+        # Restore shape: (samples, 125, 3)
+        x_scaled = scaled.reshape(x.shape)
+        print(f"✅ Preprocessed shape: {x_scaled.shape}")
+
+        return x_scaled
 
     def apply_AI_filter(self, x, b, c):
         data_processor = DataProcessing(x_eeg=x, y_doa=b, case_id=c)
@@ -326,8 +330,8 @@ class VitalDBDataset:
         test_indices = indices[:ntest]
         train_indices = indices[ntest:]
 
-        self.x_train = x[train_indices].reshape(-1, self.SEGLEN, 1)
-        self.x_test = x[test_indices].reshape(-1, self.SEGLEN, 1)
+        self.x_train = x[train_indices].reshape(-1, self.SEGLEN, 3)
+        self.x_test = x[test_indices].reshape(-1, self.SEGLEN, 3)
         self.y_train = b[train_indices]
         self.y_test = b[test_indices]
         self.c_train = c[train_indices]
@@ -340,65 +344,34 @@ class VitalDBDataset:
         print("Shape of x_test:", self.x_test.shape)
         print('====================================================')
 
-
     def visualize_imfs(self, x_data):
-        # Take a single EEG wave from your dataset
-        sample_wave = x_data[0].squeeze()  # shape (512,)
-
-        # Initialize EEMD
-        eemd = EEMD()
-        imfs = eemd.eemd(sample_wave)
+        """
+        Visualizes the 3-channel IMF-decomposed EEG signal for a single sample.
+        Assumes x_data shape is (samples, 125, 3), where the last axis corresponds to IMF 1, 2, 3.
+        """
+        # Take the first sample: shape (125, 3)
+        sample_wave = x_data[0]
 
         # Number of IMFs
-        n_imfs = imfs.shape[0]
-
-        # Plot original signal and all IMFs
-        plt.figure(figsize=(12, 2 * (n_imfs + 1)))
-        plt.subplot(n_imfs + 1, 1, 1)
-        plt.plot(sample_wave)
-        plt.title("Original EEG Signal")
+        n_imfs = sample_wave.shape[-1]
 
         # Plot each IMF
+        plt.figure(figsize=(12, 2 * n_imfs))
         for i in range(n_imfs):
-            plt.subplot(n_imfs + 1, 1, i + 2)
-            plt.plot(imfs[i])
-            plt.title(f"IMF {i+1}")
+            plt.subplot(n_imfs, 1, i + 1)
+            plt.plot(sample_wave[:, i])
+            plt.title(f"IMF {i + 1} (Channel {i + 1})")
 
         plt.tight_layout()
         plt.show()
 
-    def plot_eemd_and_without_eemd_comparison(self, x):
-        # Sample EEG wave
-        sample_wave = x[0].squeeze()
-
-        # EEMD decomposition
-        eemd = EEMD()
-        imfs = eemd.eemd(sample_wave)
-
-        # Filtered signal: remove high-frequency IMFs (e.g., IMF 0 and 1)
-        filtered_wave = np.sum(imfs[2:imfs.shape[0]-1], axis=0)  # keep IMF 2 and onward
-
-        # Plot original vs filtered
-        plt.figure(figsize=(12, 6))
-
-        plt.subplot(2, 1, 1)
-        plt.plot(sample_wave)
-        plt.title("Original EEG Signal")
-
-        plt.subplot(2, 1, 2)
-        plt.plot(filtered_wave)
-        plt.title("Filtered EEG Signal (EEMD, IMFs 2+)")
-
-        plt.tight_layout()
-        plt.show()
-
-    def calculate_correlation(self, x, y, name=""):
+    """def calculate_correlation(self, x, y, name=""):
         print("contex is ", name)
         print(x.shape)
         print(y.shape)
         x_features = np.mean(x.squeeze(), axis=1)
         corr = pearsonr(x_features, y.squeeze())[0]
-        print(f"Mean ➤ Correlation: {corr:.4f}")
+        print(f"Mean ➤ Correlation: {corr:.4f}")"""
 
 
     """def process_dataset_eemd(self, x_data, max_imfs=5, n_jobs=4):
