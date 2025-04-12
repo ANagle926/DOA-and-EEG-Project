@@ -30,7 +30,7 @@ class DataProcessing:
         #can comment out once trained appropriately
         #self.prepare_model()
 
-        model= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/data_processing.joblib")
+        model= load("AI_data_processing.joblib")
         noisy_indices = self.filter_noisy_data(model)
         self.visualize_noise_analysis(noisy_indices)
 
@@ -54,7 +54,7 @@ class DataProcessing:
         #build and train model
         model = self.create_model()
         model.fit(x_train_smote, y_train_smote, epochs=10, validation_data=(X_test, y_test))
-        dump(model, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/data_processing.joblib" )
+        dump(model, "AI_data_processing.joblib" )
 
         #make predictions on testing set
         y_pred = (model.predict(X_test) > 0.5).astype(int)

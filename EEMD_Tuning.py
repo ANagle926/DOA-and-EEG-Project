@@ -89,14 +89,14 @@ def extract_features(wave, fs=256):
 
     return features
 
-def grid_search_eemd(x_data, y_data, sample_size=100, fs=256):
+def grid_search_eemd(x_data, y_data, sample_size=300, fs=256):
     x_data = x_data[:sample_size]
     y_data = y_data[:sample_size]
 
-    max_imfs_list = [8]
-    discard_first_n_list = [0, 1, 2]
-    discard_last_n_list = [0, 1, 2]
-    noise_width_list = [0.03, 0.04]
+    max_imfs_list = [3]
+    discard_first_n_list = [0]
+    discard_last_n_list = [0]
+    noise_width_list = [0.03]
 
     all_results = []
     feature_best_corr = {}  # e.g., {'std': (corr, config), ...}
@@ -126,7 +126,7 @@ def grid_search_eemd(x_data, y_data, sample_size=100, fs=256):
                 feature_corrs[key] = corr
 
                 # Update best config per feature
-                if key not in feature_best_corr or corr > feature_best_corr[key][0]:
+                if key not in feature_best_corr or abs(corr) > abs(feature_best_corr[key][0]):
                     feature_best_corr[key] = (corr, (max_imfs, discard_first, discard_last, noise_width))
 
             all_results.append((feature_corrs, (max_imfs, discard_first, discard_last, noise_width)))

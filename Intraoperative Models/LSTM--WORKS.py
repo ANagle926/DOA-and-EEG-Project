@@ -1,6 +1,5 @@
 import keras
 import numpy as np
-import psutil
 from keras.src.utils.module_utils import scipy
 from matplotlib import pyplot as plt
 from joblib import dump, load
@@ -42,7 +41,7 @@ model.fit(X_train, y_train_small)
 print("Validation MAE:", np.mean(np.abs(model.predict(X_val) - y_val)))"""
 
 model = Sequential([
-    LSTM(64, return_sequences=True, input_shape=(seglen, 1)),
+    LSTM(64, return_sequences=True, input_shape=(seglen, 3)),
     Dense(64, activation='relu'),
     Dropout(0.3),
     Bidirectional(LSTM(128, return_sequences=True)),
