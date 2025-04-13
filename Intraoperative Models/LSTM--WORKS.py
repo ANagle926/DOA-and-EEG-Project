@@ -10,10 +10,35 @@ from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAverageP
 from sklearn.metrics import mean_absolute_error, r2_score
 
 
-dataset = VitalDBDataset(max_cases=5, srate=128)
-dump(dataset, "Pre_processed_Data.joblib")
-print("done saving dataset")
-#dataset = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset.joblib")
+""""
+To Do:
+
+save this version and create another file for hyperparameter tuning => maybe use regression file?
+(current Test MAE: 3.9506
+Correlation coefficient: 0.8545
+R squared: 0.5980)
+
+maybe dont evaluate based on r^2 because the residual variation is low => 
+most EEG waves are from normal patients, so there isnt variation in x=>
+there is clustering of x-values so outliers have leverage
+
+work on AI filter: make it more accurate or delete model
+=> evaluate correlation with y based on alpha, beta, and gamma wave (see EEMD tuning)
+
+**MAKE SURE TO SAVE GRAPHS AND Model iterations
+
+currently working with 1 case ID => will need to expand to improve r^2 and general accuracy
+
+"""
+
+
+
+
+#dataset = VitalDBDataset(max_cases=1, srate=128)
+#dump(dataset, "Processed_Data.joblib")
+#print("done saving dataset")
+dataset=load("Processed_Data.joblib")
+
 
 x_train, y_train = dataset.x_train, dataset.y_train
 x_test, y_test = dataset.x_test, dataset.y_test
@@ -25,20 +50,6 @@ print("y_train shape:", y_train.shape)
 print("x_test shape:", x_test.shape)
 print("y_test shape:", y_test.shape)
 
-
-"""from scipy.fft import fft
-
-# Take FFT of each wave
-fft_features = np.abs(fft(x_train, axis=1))[:, :100, 0]  # First 100 frequency bins
-
-# Use a simple model
-from sklearn.linear_model import Ridge
-from sklearn.model_selection import train_test_split
-
-X_train, X_val, y_train_small, y_val = train_test_split(fft_features, y_train, test_size=0.2, random_state=42)
-model = Ridge()
-model.fit(X_train, y_train_small)
-print("Validation MAE:", np.mean(np.abs(model.predict(X_val) - y_val)))"""
 
 model = Sequential([
     LSTM(64, return_sequences=True, input_shape=(seglen, 3)),
@@ -66,81 +77,81 @@ model.fit(
     ]
 )
 
-dump(model, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/LSTM_working_model_with_filter.joblib" )
+dump(model, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/LSTM_working_model_with_filter.joblib")
 
-test_loss, test_mae = model.evaluate(x_test, y_test)
-print(f"Test Loss (MAE): {test_loss}")
-print(f"Test MAE: {test_mae}")
+#model=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/LSTM_working_model_with_filter.joblib")
 
 
-#model.save(""LSTM_working_model.keras"")
-#model= keras.models.load_model("../Data Files/Model Versions/LSTM_working_model.keras")
-
+# Predict and evaluate test statistics
 pred_test = model.predict(x_test).flatten()
-
-for caseid in np.unique(c_test):
-    case_mask = (c_test == caseid)
-    pred_test[case_mask] = scipy.signal.medfilt(pred_test[case_mask], kernel_size=15)
-
-# Calculate Mean Absolute Error
 test_mae = mean_absolute_error(y_test, pred_test)
-print(f'Test MAE: {test_mae}')
-
-# Calculate correlation coefficient and R-squared
 corr = np.corrcoef(y_test, pred_test)[0, 1]
 r2 = r2_score(y_test, pred_test)
-print(f'Correlation coefficient: {corr}')
-print(f'R squared: {r2}')
+print(f"Test MAE: {test_mae:.4f}")
+print(f"Correlation coefficient: {corr:.4f}")
+print(f"R squared: {r2:.4f}")
 
-# Scatter plot of actual vs. predicted DOA values
+
+""""# 1. Scatter plot: Actual vs Predicted
 plt.figure(figsize=(6, 6))
 plt.scatter(y_test, pred_test, s=1, alpha=0.5, color='violet')
-plt.xlabel('Actual DOA')
-plt.ylabel('Predicted DOA')
+plt.xlabel('Actual BIS')
+plt.ylabel('Predicted BIS')
 plt.title(f'Scatter Plot (Correlation: {corr:.4f})')
-plt.plot([0, max(y_test)], [0, max(pred_test)], 'r--')
+plt.plot([0, max(y_test)], [0, max(y_test)], 'r--')
+plt.grid(True)
 plt.show()
 
-for caseid in np.random.choice(np.unique(c_test), size=3, replace=False):
+# 2. Histogram of prediction errors
+errors = y_test - pred_test
+plt.figure(figsize=(8, 4))
+plt.hist(errors, bins=50, color='steelblue', edgecolor='black')
+plt.xlabel('Prediction Error (Actual - Predicted)')
+plt.ylabel('Count')
+plt.title('Histogram of Prediction Errors')
+plt.grid(True)
+plt.show()
+
+# 3. Scatter plot colored by absolute error
+abs_errors = np.abs(errors)
+plt.figure(figsize=(6, 6))
+sc = plt.scatter(y_test, pred_test, c=abs_errors, s=2, cmap='viridis', alpha=0.6)
+plt.xlabel('Actual BIS')
+plt.ylabel('Predicted BIS')
+plt.title('Scatter Plot Colored by Absolute Error')
+plt.colorbar(sc, label='Absolute Error')
+plt.plot([0, max(y_test)], [0, max(y_test)], 'r--')
+plt.grid(True)
+plt.show()
+
+# 4. Time-series plots with moving average overlay (3 random cases)
+def moving_avg(signal, window=15):
+    return np.convolve(signal, np.ones(window)/window, mode='same')
+
+for caseid in np.random.choice(np.unique(c_test), size=1, replace=False):
     case_mask = (c_test == caseid)
     case_len = np.sum(case_mask)
     if case_len == 0:
         continue
-    our_mae = np.mean(np.abs(y_test[case_mask] - pred_test[case_mask]))
+
+    actual = y_test[case_mask]
+    predicted = pred_test[case_mask]
     t = np.arange(case_len)
-    plt.figure(figsize=(10, 4))
-    plt.plot(t, y_test[case_mask], label='Actual DOA')
-    plt.plot(t, pred_test[case_mask], label=f'Predicted DOA (DOA: {our_mae:.4f})')
-    plt.legend()
+    mae = np.mean(np.abs(actual - predicted))
+
+    plt.figure(figsize=(12, 4))
+    plt.plot(t, actual, label='Actual BIS', color='black')
+    plt.plot(t, predicted, label='Predicted BIS', color='royalblue', alpha=0.7)
+    plt.plot(t, moving_avg(predicted), label='Predicted (Moving Avg)', linestyle='--', color='orange')
     plt.xlabel('Time')
-    plt.ylabel('DOA')
-    plt.title(f'Case {caseid}')
-    plt.show()
-    print(f'Case {caseid}, DOA: {our_mae:.4f}')
-
-"""y_pred = model.predict(x_test).flatten()
-mae = mean_absolute_error(y_test, y_pred)
-r2 = r2_score(y_test, y_pred)
-
-print(f"Test MAE: {mae:.4f}")
-print(f"R² Score: {r2:.4f}")
-
-for caseid in np.random.choice(np.unique(c_test), size=3, replace=False):
-    case_mask = (c_test == caseid)
-    case_len = np.sum(case_mask)
-    if case_len == 0:
-        continue
-    our_mae = np.mean(np.abs(y_test[case_mask] - y_pred[case_mask]))
-    t = np.arange(case_len)
-    plt.figure(figsize=(10, 4))
-    plt.plot(t, y_test[case_mask], label='Actual DOA')
-    plt.plot(t, y_pred[case_mask], label=f'Predicted DOA (DOA: {our_mae:.4f})')
+    plt.ylabel('BIS')
+    plt.title(f'Case {caseid} | MAE: {mae:.4f}')
     plt.legend()
-    plt.xlabel('Time')
-    plt.ylabel('DOA')
-    plt.title(f'Case {caseid}')
-    plt.show()
-    print(f'Case {caseid}, DOA: {our_mae:.4f}')"""
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()"""
+
+
 
 """
 Epoch 1/10

@@ -11,19 +11,7 @@ from DataProcessingCNNV2 import DataProcessing
 from sklearn.preprocessing import StandardScaler
 from PyEMD import EEMD
 import time
-#0.29 with 1,2
-#0.09 with 2,2
-#0.33 with 1,1
-#0.25 with 1,0
-#0.26 with 0,1
-#-0.16 with 1,3
-#0.01 with 1,2
-#0.318 with 1,2
-#0.17 with 1,2
-#0.358 with 2,1
-#0.38 with 2,1
-#0.03 with 2,1... BRO WTH
-#0.14 with 2,1
+#
 def apply_eemd_to_wave(wave):
     noise_std = 0.03
 
@@ -42,7 +30,7 @@ def apply_eemd_to_wave(wave):
     # Transpose to shape (125, 3) for each sample
     return kept_imfs[:3].T
 
-def process_dataset_eemd(x_data, n_jobs=6):
+def process_dataset_eemd(x_data, n_jobs=7):
     print("⚙️ Starting parallel EEMD processing...")
     start_time = time.time()
 
@@ -78,21 +66,18 @@ class VitalDBDataset:
     def process_data(self):
 
         x,y,b,c= self.load_data()
-        x, b, c = self.remove_invalid_samples(x[:500],b[:500],c[:500])
+        x, b, c = self.remove_invalid_samples(x,b,c)
         #self.calculate_correlation(x, b, name="before processing")
 
-        dump(x, "x_data_without_filter.joblib")
-        dump(b,"y_data_without_filter.joblib")
-
+        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter.joblib")
+        dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/y_data_without_filter.joblib")
 
         #x, b, c= self.apply_AI_filter(x, b, c)
-        #self.calculate_correlation(x, b, name="after AI filter")
         x=self.apply_EEMD_filter(x)
-        #self.calculate_correlation(x, b, name = "after eemd filter")
 
-        dump(x, "postprocess_x.joblib")
-        dump(b, "postprocess_b.joblib")
-        dump(c, "postprocess_c.joblib")
+        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x.joblib")
+        dump(b, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b.joblib")
+        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")
 
         print("finished saving EEMD Data")
 
@@ -103,9 +88,6 @@ class VitalDBDataset:
         self.visualize_imfs(x)
         self.split_data_v2_temporary(x, b, c)
         print("done splitting data")
-
-        #self.x_train = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_train_after_eemd.joblib")
-        #self.x_test = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_test_after_eemd.joblib")
 
     def apply_EEMD_filter(self, x):
         x= process_dataset_eemd(x)
