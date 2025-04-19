@@ -29,6 +29,7 @@ work on AI filter: make it more accurate or delete model
 
 currently working with 1 case ID => will need to expand to improve r^2 and general accuracy
 
+MAYBE add the additional attention layer recommended by literature review
 """
 
 
@@ -51,7 +52,7 @@ print("x_test shape:", x_test.shape)
 print("y_test shape:", y_test.shape)
 
 
-model = Sequential([
+"""model = Sequential([
     LSTM(64, return_sequences=True, input_shape=(seglen, 3)),
     Dense(64, activation='relu'),
     Dropout(0.3),
@@ -77,9 +78,9 @@ model.fit(
     ]
 )
 
-dump(model, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/LSTM_working_model_with_filter.joblib")
+dump(model, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/LSTM_working_model_with_filter.joblib")"""
 
-#model=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/LSTM_working_model_with_filter.joblib")
+model=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/LSTM_working_model_with_filter.joblib")
 
 
 # Predict and evaluate test statistics
@@ -92,7 +93,7 @@ print(f"Correlation coefficient: {corr:.4f}")
 print(f"R squared: {r2:.4f}")
 
 
-""""# 1. Scatter plot: Actual vs Predicted
+# 1. Scatter plot: Actual vs Predicted
 plt.figure(figsize=(6, 6))
 plt.scatter(y_test, pred_test, s=1, alpha=0.5, color='violet')
 plt.xlabel('Actual BIS')
@@ -149,7 +150,7 @@ for caseid in np.random.choice(np.unique(c_test), size=1, replace=False):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()"""
+    plt.show()
 
 
 
