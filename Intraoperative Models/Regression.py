@@ -32,9 +32,7 @@ class EEGRegressor:
         self.seglen = seglen
         self.model = None
 
-    def create_model(self, units=64, dropout=0.4, reg_strength=0.001, learning_rate=0.001):
-
-
+    def create_model(self, units=64, dropout=0, reg_strength=0.001, learning_rate=0.0005):
         model = Sequential([
             # Optional: local pattern extraction
             Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(self.seglen, 3)),
@@ -59,16 +57,31 @@ class EEGRegressor:
         return model
 
     #Dont use train_model for hyperparameter tuning
-    #model with best hyperparameters (pretrained) is saved as self.model
-    def train_model(self, epochs=10, batch_size=128):
-        self.model = self.create_model() #with default parameters
+    def train_model(self, epochs=90, batch_size=64):
+        self.model = self.create_model()
+        reduce_lr = ReduceLROnPlateau(
+            monitor='val_mae',
+            factor=0.5,            # Reduce LR by a factor of 0.5
+            patience=4,            # Wait 4 epochs with no improvement
+            min_lr=1e-6,           # Don't go below this learning rate
+            verbose=1              # Print when LR is reduced
+        )
+        early_stop = EarlyStopping(   
+            monitor='val_mae',        
+            patience=8,               
+            restore_best_weights=True,
+            verbose=1                 
+        )                               
         self.model.fit(
             self.x_train, self.y_train,
             validation_data=(self.x_test, self.y_test),
             epochs=epochs,
             batch_size=batch_size,
-            callbacks=[ModelCheckpoint('../Data Files/Model Versions/model.keras', save_best_only=True),
-                       EarlyStopping(patience=4, restore_best_weights=True)]
+            callbacks=[
+                ModelCheckpoint('../Data Files/Model Versions/model.keras', save_best_only=True),
+                early_stop,
+                reduce_lr
+            ]
         )
 
     def hyperparameter_tuning(self):
@@ -76,14 +89,14 @@ class EEGRegressor:
         reduce_lr = ReduceLROnPlateau(
             monitor='val_mae',
             factor=0.5,
-            patience=5,
+            patience=4,
             min_lr=1e-6,
             verbose=1
         )
 
         early_stop = EarlyStopping(
             monitor='val_mae',
-            patience=10,
+            patience=8,
             restore_best_weights=True,
             verbose=1
         )
@@ -100,9 +113,9 @@ class EEGRegressor:
 
         param_grid = {
             'batch_size': [64],
-            'epochs': [60, 80],
+            'epochs': [90],
             'model__dropout': [0],  # always zero, don't change
-            'model__learning_rate': [0.0005],
+            'model__learning_rate': [0.001],
             'model__reg_strength': [0.001],
             'model__units': [64],
         }
