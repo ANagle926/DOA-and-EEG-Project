@@ -72,20 +72,41 @@ class EEGRegressor:
         )
 
     def hyperparameter_tuning(self):
+        # Define your callbacks
+        reduce_lr = ReduceLROnPlateau(
+            monitor='val_mae',
+            factor=0.5,
+            patience=5,
+            min_lr=1e-6,
+            verbose=1
+        )
 
-        model = KerasRegressor(model=lambda units, dropout, reg_strength, learning_rate: self.create_model(units=units, dropout=dropout, reg_strength=reg_strength, learning_rate=learning_rate), verbose=1, callbacks=[ValidationLogger()])
+        early_stop = EarlyStopping(
+            monitor='val_mae',
+            patience=10,
+            restore_best_weights=True,
+            verbose=1
+        )
+
+        # Initialize KerasRegressor
+        model = KerasRegressor(
+            model=lambda units, dropout, reg_strength, learning_rate: self.create_model(
+                units=units, dropout=dropout, reg_strength=reg_strength, learning_rate=learning_rate
+            ),
+            verbose=1
+        )
 
         print("KerasRegressor initialized.")
 
         param_grid = {
             'batch_size': [64],
             'epochs': [60, 80],
-            'model__dropout': [0], # always zero, dont change
+            'model__dropout': [0],  # always zero, don't change
             'model__learning_rate': [0.0005],
             'model__reg_strength': [0.001],
             'model__units': [64],
-
         }
+
         grid = GridSearchCV(
             estimator=model,
             param_grid=param_grid,
@@ -98,12 +119,15 @@ class EEGRegressor:
         )
 
         print("GridSearchCV initialized.")
-        grid_result = grid.fit(
-            self.x_train, self.y_train, **{
-            "validation_data": (self.x_test, self.y_test),
-            "callbacks": [ValidationLogger()]  # Ensures val_mae is printed
-        })
 
+        grid_result = grid.fit(
+            self.x_train,
+            self.y_train,
+            **{
+                "validation_data": (self.x_test, self.y_test),
+                "callbacks": [ValidationLogger(), reduce_lr, early_stop]
+            }
+        )
 
         if hasattr(grid_result, 'best_score_') and hasattr(grid_result, 'best_params_'):
             print(f"Best: {grid_result.best_score_} using {grid_result.best_params_}")
@@ -112,6 +136,7 @@ class EEGRegressor:
         else:
             print("Grid search did not return best parameters.")
             return None
+
 
     def moving_avg(self, signal, window=15):
         return np.convolve(signal, np.ones(window)/window, mode='same')
