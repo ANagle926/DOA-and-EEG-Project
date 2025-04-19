@@ -67,7 +67,6 @@ class VitalDBDataset:
 
         x,y,b,c= self.load_data()
         x, b, c = self.remove_invalid_samples(x,b,c)
-        #self.calculate_correlation(x, b, name="before processing")
 
         dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter.joblib")
         dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/y_data_without_filter.joblib")
