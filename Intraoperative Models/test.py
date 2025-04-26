@@ -4,22 +4,56 @@ import numpy as np
 from joblib import Parallel, delayed, load
 import time
 from PyEMD import EEMD
+from matplotlib import pyplot as plt
+import seaborn as sns
+
 from scipy.stats import pearsonr
 from sklearn.metrics import mean_absolute_error, r2_score
 
-dataset=load("Processed_Data.joblib")
-x_train, y_train = dataset.x_train, dataset.y_train
-x_test, y_test = dataset.x_test, dataset.y_test
-c_train, c_test = dataset.c_train, dataset.c_test
-seglen = dataset.SEGLEN
-model= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/Model Versions/eeg_regressor.joblib")
 
-# Predict and evaluate test statistics
-pred_test = model.predict(x_test).flatten()
+old_dataset= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_three_cases.joblib")
+new_dataset= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases.joblib")
 
-test_mae = mean_absolute_error(y_test, pred_test)
-corr = np.corrcoef(y_test, pred_test)[0, 1]
-r2 = r2_score(y_test, pred_test)
-print(f"Test MAE: {test_mae:.4f}")
-print(f"Correlation coefficient: {corr:.4f}")
-print(f"R squared: {r2:.4f}")
+# Shapes
+print("📏 SHAPES:")
+print("Old:", old_dataset.x_train.shape, old_dataset.y_train.shape)
+print("New:", new_dataset.x_train.shape, new_dataset.y_train.shape)
+
+# Value Ranges
+print("\n🔢 TARGET VALUE RANGES:")
+print("Old y: min =", np.min(old_dataset.y_train), "max =", np.max(old_dataset.y_train))
+print("New y: min =", np.min(new_dataset.y_train), "max =", np.max(new_dataset.y_train))
+
+# Target Distribution Comparison
+plt.figure(figsize=(12, 5))
+plt.subplot(1, 2, 1)
+sns.histplot(old_dataset.y_train, bins=30, color='blue', kde=True)
+plt.title("Old Dataset Target Distribution")
+
+plt.subplot(1, 2, 2)
+sns.histplot(new_dataset.y_train, bins=30, color='green', kde=True)
+plt.title("New Dataset Target Distribution")
+plt.tight_layout()
+plt.show()
+
+# EEG Value Ranges
+print("\n📈 EEG VALUE RANGES:")
+print("Old x: min =", np.min(old_dataset.x_train), "max =", np.max(old_dataset.x_train))
+print("New x: min =", np.min(new_dataset.x_train), "max =", np.max(new_dataset.x_train))
+
+# Plot a few EEG samples
+def plot_eeg_segment(eeg_data, title):
+    plt.figure(figsize=(10, 3))
+    for i in range(eeg_data.shape[-1]):  # Plot each EEG channel
+        plt.plot(eeg_data[:, i], label=f'Channel {i+1}')
+    plt.title(title)
+    plt.xlabel("Time")
+    plt.ylabel("Amplitude")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+print("\n🧠 EEG SEGMENT EXAMPLES:")
+plot_eeg_segment(old_dataset.x_train[2], "Old EEG Segment Example")
+plot_eeg_segment(new_dataset.x_train[2], "New EEG Segment Example")
+

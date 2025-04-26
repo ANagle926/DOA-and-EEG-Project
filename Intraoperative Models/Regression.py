@@ -7,7 +7,7 @@ from imblearn.tensorflow.tests.test_generator import tf
 from keras import Sequential
 from keras.src.callbacks import ModelCheckpoint, EarlyStopping, Callback
 from keras.src.layers import LSTM, Dense, Dropout, Bidirectional, GlobalAveragePooling1D, LayerNormalization, \
-    GlobalMaxPooling1D, MaxPooling1D, Conv1D, SpatialDropout1D
+    GlobalMaxPooling1D, MaxPooling1D, Conv1D, SpatialDropout1D, TimeDistributed, Conv2D, MultiHeadAttention, Lambda
 from keras.src.optimizers import Adam
 
 from scikeras.wrappers import KerasRegressor
@@ -15,13 +15,38 @@ from scipy.signal import medfilt
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import mean_absolute_error, r2_score
 from keras.src.callbacks import ReduceLROnPlateau, EarlyStopping
-
+from keras.src.layers import MultiHeadAttention
+from keras.src.layers import Layer
 
 
 class ValidationLogger(Callback):
     def on_epoch_end(self, epoch, logs=None):
         if logs:
             print(f"Epoch {epoch+1}: val_mae = {logs.get('val_mean_absolute_error', 'Not Available')}")
+
+class TransformerBlock(Layer):
+    def __init__(self, num_heads, key_dim, ff_units, dropout_rate):
+        super(TransformerBlock, self).__init__()
+        self.attn = MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)
+        self.ffn = Sequential([
+            Dense(ff_units, activation='relu'),
+            Dropout(dropout_rate),
+            Dense(key_dim)
+        ])
+        self.attn_norm = LayerNormalization()
+        self.ffn_norm = LayerNormalization()
+        self.dropout = Dropout(dropout_rate)
+
+    def call(self, x, training=False):
+        # Attention part
+        attn_output = self.attn(x, x)
+        attn_output = self.attn_norm(x + attn_output)  # Residual connection + normalization
+
+        # Feed-forward part
+        ffn_output = self.ffn(attn_output)
+        ffn_output = self.ffn_norm(attn_output + ffn_output)  # Residual connection + normalization
+
+        return ffn_output
 
 
 class EEGRegressor:
@@ -32,8 +57,9 @@ class EEGRegressor:
         self.seglen = seglen
         self.model = None
 
-    def create_model(self, units=64, dropout=0, reg_strength=0.001, learning_rate=0.0005):
-        model = Sequential([
+#add attention layers
+    def create_model(self, units=192, dropout=0.1, reg_strength=0, learning_rate=0.00001):
+        """model = Sequential([
             # Optional: local pattern extraction
             Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(self.seglen, 3)),
             SpatialDropout1D(dropout),
@@ -50,6 +76,56 @@ class EEGRegressor:
             Dropout(dropout),
             Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(reg_strength)),
             Dense(1)
+        ])"""
+        """model = Sequential([
+            Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(self.seglen, 3)),
+            Conv1D(128, kernel_size=3, activation='relu'),
+            SpatialDropout1D(dropout),
+            MaxPooling1D(pool_size=2),
+
+            Bidirectional(LSTM(units * 2, return_sequences=True, kernel_regularizer=keras.regularizers.l2(reg_strength))),
+            LayerNormalization(),
+            # Multi-head attention layers (stacked)
+            self.mha_layer(),
+            LayerNormalization(),
+            self.mha_layer(),
+            LayerNormalization(),
+
+            LSTM(units, return_sequences=True, kernel_regularizer=keras.regularizers.l2(reg_strength)),
+
+            GlobalAveragePooling1D(),
+
+            Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(reg_strength)),
+            LayerNormalization(),
+            Dropout(dropout),
+            Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(reg_strength)),
+            Dense(1)
+        ])"""
+        model = Sequential([
+            Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(self.seglen, 3)),
+            Conv1D(128, kernel_size=3, activation='relu'),
+            SpatialDropout1D(dropout),
+            MaxPooling1D(pool_size=2),
+
+            Bidirectional(LSTM(units * 2, return_sequences=True, kernel_regularizer=keras.regularizers.l2(reg_strength))),
+            LayerNormalization(),
+            LSTM(units, return_sequences=True, kernel_regularizer=keras.regularizers.l2(reg_strength)),
+
+            # 👇 Add Transformer-style Attention blocks
+            #maybe lower ff_units
+            TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout),
+            TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout),
+
+
+            GlobalAveragePooling1D(),
+
+            Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(reg_strength)),
+            #TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout),
+            #TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout),
+            LayerNormalization(),
+            Dropout(dropout),
+            Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(reg_strength)),
+            Dense(1)
         ])
 
         optimizer = Adam(learning_rate=learning_rate)  # Use learning_rate from GridSearch
@@ -57,18 +133,18 @@ class EEGRegressor:
         return model
 
     #Dont use train_model for hyperparameter tuning
-    def train_model(self, epochs=90, batch_size=64):
+    def train_model(self, epochs=50, batch_size=32):
         self.model = self.create_model()
         reduce_lr = ReduceLROnPlateau(
             monitor='val_mae',
             factor=0.5,            # Reduce LR by a factor of 0.5
-            patience=4,            # Wait 4 epochs with no improvement
+            patience=3,            # Wait 4 epochs with no improvement
             min_lr=1e-6,           # Don't go below this learning rate
             verbose=1              # Print when LR is reduced
         )
         early_stop = EarlyStopping(   
             monitor='val_mae',        
-            patience=8,               
+            patience=5,
             restore_best_weights=True,
             verbose=1                 
         )                               
@@ -96,7 +172,7 @@ class EEGRegressor:
 
         early_stop = EarlyStopping(
             monitor='val_mae',
-            patience=8,
+            patience=10,
             restore_best_weights=True,
             verbose=1
         )
@@ -112,12 +188,12 @@ class EEGRegressor:
         print("KerasRegressor initialized.")
 
         param_grid = {
-            'batch_size': [64],
-            'epochs': [90],
-            'model__dropout': [0],  # always zero, don't change
-            'model__learning_rate': [0.001],
-            'model__reg_strength': [0.001],
-            'model__units': [64],
+            'batch_size': [128, 256],
+            'epochs': [40],
+            'model__dropout': [0.1],
+            'model__learning_rate': [0.00001],
+            'model__reg_strength': [0],
+            'model__units': [128],
         }
 
         grid = GridSearchCV(
@@ -222,3 +298,9 @@ class EEGRegressor:
             plt.grid(True)
             plt.tight_layout()
             plt.show()
+
+    def mha_layer(self):
+        num_heads = 4
+        key_dim = 32  # usually features // num_heads
+        return Lambda(lambda x: MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)(x, x))
+
