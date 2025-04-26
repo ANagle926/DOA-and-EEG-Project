@@ -51,7 +51,7 @@ def process_dataset_eemd(x_data, n_jobs=7):
 
 
 class VitalDBDataset:
-    def __init__(self, max_cases=100, srate=128):
+    def __init__(self, max_cases=20, srate=128):
         self.SRATE = srate
         self.SEGLEN = 4 * self.SRATE  # 4-second segments
         self.MAX_CASES = max_cases
@@ -64,29 +64,48 @@ class VitalDBDataset:
         self.process_data()
 
     def process_data(self):
+        print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 
-        x,y,b,c= self.load_data()
+
+        """x,y,b,c= self.load_data()
         x, b, c = self.remove_invalid_samples(x,b,c)
 
         dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter.joblib")
-        dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/y_data_without_filter.joblib")
+        dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/b_data_without_filter.joblib")
 
-        #x, b, c= self.apply_AI_filter(x, b, c)
+        x, b, c= self.remove_excessive_samples(x,b,c)
+
         x=self.apply_EEMD_filter(x)
 
         dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x.joblib")
         dump(b, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b.joblib")
-        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")
+        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")"""
 
+        x=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x.joblib")
+        b= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b.joblib")
+        c=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")
         print("finished saving EEMD Data")
 
-        #x=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_x.joblib")
-        #b=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_b.joblib")
-        #c=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/preprocess_c.joblib")
-
         self.visualize_imfs(x)
-        self.split_data_v2_temporary(x, b, c)
+        self.split_data(x, b, c)
         print("done splitting data")
+
+    def remove_excessive_samples(self, x, b, c):
+        # Step 1: Initialize mask for keeping valid samples
+        keep_mask = np.zeros_like(c, dtype=bool)
+
+        # Step 2: Loop through each case ID and keep only first 3000 samples
+        for case_id in np.unique(c):
+            case_indices = np.where(c == case_id)[0]
+            first_3000 = case_indices[:3000]
+            keep_mask[first_3000] = True
+
+        # Step 3: Apply the mask to your data
+        x = x[keep_mask]
+        b = b[keep_mask]
+        c = c[keep_mask]
+
+        return x,b,c
 
     def apply_EEMD_filter(self, x):
         x= process_dataset_eemd(x)
@@ -286,11 +305,11 @@ class VitalDBDataset:
     def split_data(self, x, b, c):
 
         caseids = np.unique(c)
-        ntest = max(1, int(len(caseids) * 0.2))
+        ntest = max(1, int(len(caseids) * 0.3))
         caseids_train, caseids_test = caseids[ntest:], caseids[:ntest]
 
         train_mask, test_mask = np.isin(c, caseids_train), np.isin(c, caseids_test)
-        self.x_train, self.x_test = x[train_mask].reshape(-1, self.SEGLEN, 1), x[test_mask].reshape(-1, self.SEGLEN, 1)
+        self.x_train, self.x_test = x[train_mask].reshape(-1, self.SEGLEN, 3), x[test_mask].reshape(-1, self.SEGLEN, 3)
         self.y_train, self.y_test = b[train_mask], b[test_mask]
         self.c_train, self.c_test= c[train_mask], c[test_mask]
 
@@ -302,28 +321,6 @@ class VitalDBDataset:
         print("shape of x_test", self.x_test.shape)
         print('====================================================')
 
-    def split_data_v2_temporary(self, x, b, c):
-        total_samples = len(x)
-        ntest = max(1, int(0.2 * total_samples))  # 20% for test
-        indices = np.arange(total_samples)
-        np.random.shuffle(indices)  # shuffle to ensure randomness
-
-        test_indices = indices[:ntest]
-        train_indices = indices[ntest:]
-
-        self.x_train = x[train_indices].reshape(-1, self.SEGLEN, 3)
-        self.x_test = x[test_indices].reshape(-1, self.SEGLEN, 3)
-        self.y_train = b[train_indices]
-        self.y_test = b[test_indices]
-        self.c_train = c[train_indices]
-        self.c_test = c[test_indices]
-
-        print('====================================================')
-        print(f'Total samples: {total_samples}')
-        print(f'Train samples: {len(self.y_train)}, Test samples: {len(self.y_test)}')
-        print("Shape of x_train:", self.x_train.shape)
-        print("Shape of x_test:", self.x_test.shape)
-        print('====================================================')
 
     def visualize_imfs(self, x_data):
         """
@@ -346,30 +343,3 @@ class VitalDBDataset:
         plt.tight_layout()
         plt.show()
 
-    """def calculate_correlation(self, x, y, name=""):
-        print("contex is ", name)
-        print(x.shape)
-        print(y.shape)
-        x_features = np.mean(x.squeeze(), axis=1)
-        corr = pearsonr(x_features, y.squeeze())[0]
-        print(f"Mean ➤ Correlation: {corr:.4f}")"""
-
-
-    """def process_dataset_eemd(self, x_data, max_imfs=5, n_jobs=4):
-        print("⚙️ Starting parallel EEMD processing...")
-        start_time = time.time()
-
-        # Wrapper for parallel processing
-        def process_single_wave(wave):
-            wave = wave.squeeze()  # shape: (512,)
-            return self.apply_eemd_to_eeg(wave, max_imfs=max_imfs)
-
-        # Run in parallel
-        processed = Parallel(n_jobs=n_jobs, backend='loky')(
-            delayed(process_single_wave)(x_data[i]) for i in range(len(x_data))
-        )
-
-        total_time = time.time() - start_time
-        print(f"✅ Done processing {len(x_data)} samples in {total_time:.2f} seconds using {n_jobs} core(s).")
-
-        return np.array(processed)[..., np.newaxis]  # shape: (samples, 512, 1)"""
