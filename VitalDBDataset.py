@@ -11,7 +11,7 @@ from DataProcessingCNNV2 import DataProcessing
 from sklearn.preprocessing import StandardScaler
 from PyEMD import EEMD
 import time
-#
+#git changes
 def apply_eemd_to_wave(wave):
     noise_std = 0.03
 
