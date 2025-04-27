@@ -1,6 +1,5 @@
 import numpy as np
 from PyEMD import EEMD
-from joblib import load
 from scipy.signal import welch
 from scipy.stats import pearsonr
 from itertools import product
@@ -144,7 +143,7 @@ def grid_search_eemd(x_data, y_data, sample_size=300, fs=256):
 
     return all_results, feature_best_corr
 
-dataset = VitalDBDataset(max_cases=2, srate=128)
+dataset = VitalDBDataset(max_cases=1, srate=128)
 x=dataset.x
 b=dataset.y
 c=dataset.c

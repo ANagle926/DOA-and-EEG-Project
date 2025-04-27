@@ -2,11 +2,9 @@ import numpy as np
 import pandas as pd
 import psutil
 import vitaldb
-from joblib import dump, load, Parallel, delayed
+from joblib import load, Parallel, delayed
 from matplotlib import pyplot as plt
-from scipy.stats import pearsonr
 
-from DataProcessingCNNV2 import DataProcessing
 
 from sklearn.preprocessing import StandardScaler
 from PyEMD import EEMD
@@ -123,12 +121,6 @@ class VitalDBDataset:
 
         return x_scaled
 
-    def apply_AI_filter(self, x, b, c):
-        data_processor = DataProcessing(x_eeg=x, y_doa=b, case_id=c)
-        x=data_processor.cleaned_eeg
-        b=data_processor.cleaned_y
-        c=data_processor.cleaned_case_id
-        return x, b, c
 
     def load_data(self):
         """"Loads and processes EEG and MAC data from VitalDB."""

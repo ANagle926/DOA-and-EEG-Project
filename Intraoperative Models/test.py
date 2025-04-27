@@ -11,7 +11,7 @@ from scipy.stats import pearsonr
 from sklearn.metrics import mean_absolute_error, r2_score
 
 
-old_dataset= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_three_cases.joblib")
+"""old_dataset= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_three_cases.joblib")
 new_dataset= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases.joblib")
 
 # Shapes
@@ -55,5 +55,9 @@ def plot_eeg_segment(eeg_data, title):
 
 print("\n🧠 EEG SEGMENT EXAMPLES:")
 plot_eeg_segment(old_dataset.x_train[2], "Old EEG Segment Example")
-plot_eeg_segment(new_dataset.x_train[2], "New EEG Segment Example")
+plot_eeg_segment(new_dataset.x_train[2], "New EEG Segment Example")"""
+
+import tensorflow as tf
+print(tf.__version__)
+
 
