@@ -2,14 +2,14 @@ import numpy as np
 import pandas as pd
 import psutil
 import vitaldb
-from joblib import load, Parallel, delayed
+from joblib import load, Parallel, delayed, dump
 from matplotlib import pyplot as plt
 
 
 from sklearn.preprocessing import StandardScaler
 from PyEMD import EEMD
 import time
-#git changes
+
 def apply_eemd_to_wave(wave):
     noise_std = 0.03
 
@@ -28,7 +28,7 @@ def apply_eemd_to_wave(wave):
     # Transpose to shape (125, 3) for each sample
     return kept_imfs[:3].T
 
-def process_dataset_eemd(x_data, n_jobs=7):
+def process_dataset_eemd(x_data, n_jobs=8):
     print("⚙️ Starting parallel EEMD processing...")
     start_time = time.time()
 
@@ -47,11 +47,10 @@ def process_dataset_eemd(x_data, n_jobs=7):
     print(f"✅ Done processing {len(x_data)} samples in {total_time:.2f} seconds.")
     return np.array(processed)  # shape: (samples, 125, 3)
 
-
 class VitalDBDataset:
     def __init__(self, max_cases=20, srate=128):
         self.SRATE = srate
-        self.SEGLEN = 4 * self.SRATE  # 4-second segments
+        self.SEGLEN = 8 * self.SRATE  # 8-second segments
         self.MAX_CASES = max_cases
 
         # Train/test data placeholders
@@ -64,25 +63,32 @@ class VitalDBDataset:
     def process_data(self):
         print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 
-
-        """x,y,b,c= self.load_data()
+        x,y,b,c= self.load_data()
         x, b, c = self.remove_invalid_samples(x,b,c)
 
         dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter.joblib")
         dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/b_data_without_filter.joblib")
 
-        x, b, c= self.remove_excessive_samples(x,b,c)
+        x_new, b_new, c_new= self.remove_excessive_samples(x,b,c)
 
-        x=self.apply_EEMD_filter(x)
+        x_new=self.apply_EEMD_filter(x_new)
+
+        x_first_thousand=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x.joblib")
+        b_first_thousand= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b.joblib")
+        c_first_thousand=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")
+
+        x = np.concatenate([x_first_thousand, x_new], axis=0)
+        b = np.concatenate([b_first_thousand, b_new], axis=0)
+        c = np.concatenate([c_first_thousand, c_new], axis=0)
+
 
         dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x.joblib")
         dump(b, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b.joblib")
-        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")"""
-
-        x=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x.joblib")
-        b= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b.joblib")
-        c=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")
+        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")
         print("finished saving EEMD Data")
+
+        print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
+
 
         self.visualize_imfs(x)
         self.split_data(x, b, c)
@@ -95,7 +101,7 @@ class VitalDBDataset:
         # Step 2: Loop through each case ID and keep only first 3000 samples
         for case_id in np.unique(c):
             case_indices = np.where(c == case_id)[0]
-            first_3000 = case_indices[:3000]
+            first_3000 = case_indices[1000:2000]
             keep_mask[first_3000] = True
 
         # Step 3: Apply the mask to your data
@@ -120,7 +126,6 @@ class VitalDBDataset:
         print(f"✅ Preprocessed shape: {x_scaled.shape}")
 
         return x_scaled
-
 
     def load_data(self):
         """"Loads and processes EEG and MAC data from VitalDB."""
@@ -312,7 +317,6 @@ class VitalDBDataset:
         print("shape of x_train", self.x_train.shape)
         print("shape of x_test", self.x_test.shape)
         print('====================================================')
-
 
     def visualize_imfs(self, x_data):
         """
