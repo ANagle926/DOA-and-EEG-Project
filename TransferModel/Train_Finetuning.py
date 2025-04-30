@@ -2,17 +2,17 @@ from keras import optimizers, callbacks
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.linear_model import LinearRegression
 
-from Build_Models import build_finetuning_model
+from Build_Models import build_finetuning_model, build_early_fusion_model
 import numpy as np
 import matplotlib.pyplot as plt
 
 
-def train_finetuning(x_finetune, y_finetune, seglen=128):
-
+def train_finetuning(x_finetune, y_finetune, seglen):
     sequence_length =seglen
 
     # Build fine-tuning model
-    finetune_model = build_finetuning_model(sequence_length=sequence_length, backbone_weights_path='backbone_weights.h5')
+    finetune_model = build_finetuning_model(sequence_length=sequence_length, backbone_weights_path='backbone_weights.weights.h5')
+    #finetune_model = build_early_fusion_model(sequence_length=sequence_length)
 
     # Compile it
     finetune_model.compile(
@@ -24,6 +24,7 @@ def train_finetuning(x_finetune, y_finetune, seglen=128):
     #  Freeze the CNNs initially
     for layer in finetune_model.layers:
         if 'deepsleepnet_backbone' in layer.name:
+            print("freezing")
             layer.trainable = False
 
     # Train the Dense/LSTM heads first (warm-up training)
@@ -31,14 +32,16 @@ def train_finetuning(x_finetune, y_finetune, seglen=128):
         x_finetune,   # your (IMF1, IMF2, IMF3) stacked data
         y_finetune,   # BIS or DOA targets
         validation_split=0.2,
-        epochs=10,
-        batch_size=64,
+        epochs=40,
+        batch_size=128,
         callbacks=[
-            callbacks.EarlyStopping(patience=5, restore_best_weights=True)
+            callbacks.EarlyStopping(patience=10, restore_best_weights=True),
+            callbacks.ReduceLROnPlateau(factor=0.8, patience=6, min_lr=1e-6)
         ]
     )
 
     # Unfreeze everything
+    print("unfreezing")
     for layer in finetune_model.layers:
         layer.trainable = True
 
@@ -47,32 +50,25 @@ def train_finetuning(x_finetune, y_finetune, seglen=128):
         x_finetune,
         y_finetune,
         validation_split=0.2,
-        epochs=50,
-        batch_size=64,
+        epochs=60,
+        batch_size=128,
         callbacks=[
-            callbacks.ModelCheckpoint('best_finetuned_model.h5', save_best_only=True, monitor='val_mae'),
-            callbacks.EarlyStopping(patience=5, restore_best_weights=True),
-            callbacks.ReduceLROnPlateau(factor=0.5, patience=3, min_lr=1e-6)
+            callbacks.ModelCheckpoint('best_finetuned_model.keras', save_best_only=True, monitor='val_mae'),
+            callbacks.EarlyStopping(patience=10, restore_best_weights=True),
+            callbacks.ReduceLROnPlateau(factor=0.8, patience=6, min_lr=1e-6)
         ]
 
     )
 
     finetune_model.save('final_finetuned_model.h5')
+    return finetune_model
 
 def test_finetuning(finetune_model, x_test, y_test):
-    # Predict
-    pred_test = finetune_model.predict(x_test).flatten()  # make sure it's 1D array
 
-
-    test_mae = mean_absolute_error(y_test, pred_test)
-    corr = np.corrcoef(y_test, pred_test)[0, 1]
-    r2 = r2_score(y_test, pred_test)
-    print(f"Test MAE: {test_mae:.4f}")
-    print(f"Correlation coefficient: {corr:.4f}")
-    print(f"R squared: {r2:.4f}")
-
+    #pred_test = finetune_model.predict(x_test).flatten()  # make sure it's 1D array
+    pred_test = mc_dropout_predict(finetune_model, x_test, n_samples=10)
+    pred_test = np.squeeze(pred_test)
     apply_calibration(pred_test, y_test)
-
 
     # Histogram of prediction errors
     errors = y_test - pred_test
@@ -140,6 +136,33 @@ def apply_calibration(y_pred, y_test, a_tol=0.2, b_tol=10):
     print(f"Test MAE: {test_mae:.4f}")
     print(f"Correlation coefficient: {corr:.4f}")
     print(f"R squared: {r2:.4f}")
+
+import numpy as np
+
+def mc_dropout_predict(model, x_test, n_samples=10, batch_size=128):
+    """
+    Make MC Dropout predictions by averaging over n_samples stochastic forward passes.
+    Processes in batches to avoid GPU OOM.
+    """
+    preds = []
+
+    for sample_idx in range(n_samples):
+        batch_preds = []
+
+        # Predict in small batches
+        for i in range(0, x_test.shape[0], batch_size):
+            x_batch = x_test[i:i+batch_size]
+            pred_batch = model(x_batch, training=True)
+            batch_preds.append(pred_batch.numpy())
+
+        batch_preds = np.concatenate(batch_preds, axis=0)  # (full test size, output_dim)
+        preds.append(batch_preds)
+
+    preds = np.stack(preds, axis=0)  # (n_samples, full test size, output_dim)
+    mean_preds = np.mean(preds, axis=0)  # Average over MC samples
+
+    return mean_preds
+
 
 
 

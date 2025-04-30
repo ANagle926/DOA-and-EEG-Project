@@ -120,8 +120,6 @@ class EEGRegressor:
             GlobalAveragePooling1D(),
 
             Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(reg_strength)),
-            #TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout),
-            #TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout),
             LayerNormalization(),
             Dropout(dropout),
             Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(reg_strength)),
