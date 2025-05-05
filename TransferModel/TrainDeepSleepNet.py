@@ -1,135 +1,60 @@
-import os
+from tsai.all import *
+dsid = 'ECG5000'
+
+# Get data with splits
+X, y, splits = get_UCR_data(dsid, split_data=False)
+X_train = X[splits[0]]  # Get training portion
+y_train = y[splits[0]]  # Get training labels
+
+# Define transforms with EXPLICIT vocabulary
+tfms = [None, TSCategorize()]
+batch_tfms = TSStandardize()
+
+# Create dataloaders
+dls = get_ts_dls(
+    X, y, tfms=tfms, splits=splits, batch_tfms=batch_tfms
+)
+
+# Create learner
+learn = ts_learner(dls, arch='InceptionTime', metrics=accuracy)
+learn.fit_one_cycle(20, 1e-3)
+learn.export("InceptionTime_ECG5000.pkl")
+
 import numpy as np
-import mne
-from sklearn.model_selection import train_test_split
-from keras import layers, models
+import torch
 
-def load_sleep_edf_record(eeg_path, hypnogram_path):
-    # Load and preprocess EEG
-    raw = mne.io.read_raw_edf(eeg_path, preload=True)
-    raw.pick(picks=['EEG Fpz-Cz'])
-    raw.resample(100)
+# Load trained model
+learn = load_learner("InceptionTime_ECG5000.pkl")
+learn.model.eval()
 
-    # Process annotations
-    annotations = mne.read_annotations(hypnogram_path)
-    raw.set_annotations(annotations)
+# Load your IMF EEG data
+# Shape should be: (samples, channels=3, timesteps=125)
+X_imf = np.load("your_imf_data.npy")
+X_tensor = torch.from_numpy(X_imf).float()
 
-    # Stage mapping with merged deep sleep
-    mapping = {
-        'Sleep stage W': 0,
-        'Sleep stage 1': 1,
-        'Sleep stage 2': 2,
-        'Sleep stage 3': 3,  # Combined stage 3/4
-        'Sleep stage 4': 3,
-        'Sleep stage R': 4,
-        'Sleep stage ?': -1,
-        'Movement time': -1,
-    }
+# Extract features using the CNN encoder only
+with torch.no_grad():
+    features = learn.model[0](X_tensor)  # CNN feature extractor
 
-    # Create events from annotations
-    events, event_id = mne.events_from_annotations(raw, event_id=mapping)
+# Save the extracted features for Keras
+np.save("extracted_features.npy", features.numpy())
 
-    # Create epochs with critical fixes
-    epochs = mne.Epochs(
-        raw,
-        events,
-        event_id=event_id,
-        tmin=0,
-        tmax=29.99,
-        baseline=None,
-        detrend=0,  # Fix 1: Disable detrending to prevent empty epoch errors
-        picks=['EEG Fpz-Cz'],
-        preload=True,
-        on_missing='ignore'  # Fix 2: Handle missing events gracefully
-    )
+import numpy as np
+from tensorflow.keras import layers, models
 
-    # Get data and labels
-    x = epochs.get_data()  # (n_epochs, 1, 3000)
-    y = epochs.events[:, 2]
+# Load features and corresponding BIS values
+X_features = np.load("extracted_features.npy")
+y_bis = np.load("bis_labels.npy")  # shape: (samples,)
 
-    # Filter out unknown/movement stages
-    valid_idx = y != -1  # Fix 3: Remove invalid labels
-    return x[valid_idx], y[valid_idx]
+# Build regression model
+inputs = layers.Input(shape=(X_features.shape[1],))
+x = layers.Dense(128, activation='relu')(inputs)
+x = layers.Dropout(0.3)(x)
+x = layers.Dense(64, activation='relu')(x)
+outputs = layers.Dense(1, activation='linear')(x)
 
-def build_deepsleepnet_keras(sequence_length):
-    # Model architecture remains the same
-    inputs = layers.Input(shape=(sequence_length, 1))
-    x = layers.Conv1D(64, 5, padding='same', activation='relu')(inputs)
-    x = layers.MaxPooling1D(pool_size=2)(x)
-    x = layers.Conv1D(128, 5, padding='same', activation='relu')(x)
-    x = layers.MaxPooling1D(pool_size=2)(x)
-    x = layers.Conv1D(256, 5, padding='same', activation='relu')(x)
-    x = layers.MaxPooling1D(pool_size=2)(x)
-    x = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(x)
-    x = layers.Bidirectional(layers.LSTM(64))(x)
-    x = layers.Dense(128, activation='relu')(x)
-    x = layers.Dropout(0.5)(x)
-    x = layers.Dense(5, activation='softmax')(x)
-    return models.Model(inputs, x)
+model = models.Model(inputs, outputs)
+model.compile(optimizer='adam', loss='mae', metrics=['mae'])
 
-# Enhanced data loading with debugging
-# Corrected file loading logic
-data_folder = "/home/anika/sleep-edf/sleep-cassette"
-all_x, all_y = [], []
-
-for file in os.listdir(data_folder):
-    if file.endswith("-PSG.edf"):
-        base_name = file.split("-PSG.edf")[0]
-        eeg_file = os.path.join(data_folder, file)
-        hypnogram_file = os.path.join(data_folder, f"{base_name}-Hypnogram.edf")
-
-        # Check for alternative hypnogram naming
-        if not os.path.exists(hypnogram_file):
-            hypnogram_file = os.path.join(data_folder, f"{base_name.replace('E0','EC')}-Hypnogram.edf")
-
-        if os.path.exists(hypnogram_file):
-            try:
-                x, y = load_sleep_edf_record(eeg_file, hypnogram_file)
-                all_x.append(x)
-                all_y.append(y)
-                print(f"✅ Successfully processed {base_name}")
-            except Exception as e:
-                print(f"❌ Error processing {base_name}: {str(e)}")
-        else:
-            print(f"⚠️ Missing hypnogram for {base_name}")
-
-# Handle empty case
-if not all_x:
-    raise ValueError("No valid data files found!")
-
-# Combine data
-x_all = np.concatenate(all_x, axis=0)
-y_all = np.concatenate(all_y, axis=0)
-print(f"\n✅ Final dataset: {x_all.shape[0]} samples")
-
-# Train-test split
-x_train, x_val, y_train, y_val = train_test_split(
-    x_all, y_all,
-    test_size=0.2,
-    random_state=42,
-    stratify=y_all
-)
-
-x_train = x_train.transpose(0, 2, 1)  # (samples, 3000, 1)
-x_val = x_val.transpose(0, 2, 1)
-
-# Build and train model
-model = build_deepsleepnet_keras(3000)
-model.compile(
-    optimizer='adam',
-    loss='sparse_categorical_crossentropy',
-    metrics=['accuracy']
-)
-
-history = model.fit(
-    x_train, y_train,
-    validation_data=(x_val, y_val),
-    epochs=20,
-    batch_size=128,
-    verbose=1
-)
-
-# Save model
-model.save_weights("deepsleepnet_sleepedf_weights.h5")
-print("Training complete!")
-
+# Train
+model.fit(X_features, y_bis, validation_split=0.2, epochs=20, batch_size=64)

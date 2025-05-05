@@ -1,43 +1,32 @@
-from tsai.all import *
-import torch
 import numpy as np
-import numpy as np
+from fastai.learner import load_learner
+from fastai.metrics import accuracy
 from keras import layers, models
+from tsai.data.core import TSClassification
+from tsai.data.external import get_UCR_data
+from tsai.data.preprocessing import TSStandardize
+from tsai.tslearner import TSClassifier
 
+# Load ECG5000 dataset
+X, y, splits = get_UCR_data('ECG5000', split_data=True)
 
-# Load pretrained InceptionTime model
-model = load_learner('InceptionTime_Inference_Learner.pkl')  # You may need to download one
+# Define transformations
+tfms = [None, TSClassification()]
+batch_tfms = TSStandardize()
 
-# Prepare your IMF EEG input
-# X shape: (num_samples, seq_len, n_channels) e.g., (5000, 125, 3)
-X = np.load('imf_data.npy')  # Your IMF segments
+# Initialize and train the model
+clf = TSClassifier(X, y, splits=splits, path='models', arch="InceptionTime", tfms=tfms, batch_tfms=batch_tfms, metrics=accuracy)
+clf.fit_one_cycle(20, 1e-3)
 
-# Convert to torch format
-X_tensor = torch.from_numpy(X).float()
+# Export the trained model
+clf.export("InceptionTime_ECG5000.pkl")
 
-# Disable gradients
-model.model.eval()
-with torch.no_grad():
-    # Pass data through all but the final layer to get feature vectors
-    features = model.model[0](X_tensor)  # assume model[0] is the CNN encoder
+# Load the trained model
+learn = load_learner("InceptionTime_ECG5000.pkl")
 
-# Save features for Keras
-np.save("inception_features.npy", features.numpy())
+# Prepare your EEG IMF data
+# Ensure X_imf has the shape: (samples, variables, timesteps)
+X_imf = np.load("your_imf_data.npy")
 
-
-# Load saved features
-X_features = np.load("inception_features.npy")  # shape: (samples, feature_dim)
-y_labels = np.load("bis_labels.npy")  # Your BIS values (same order as X)
-
-# Keras regression model
-inputs = layers.Input(shape=(X_features.shape[1],))
-x = layers.Dense(128, activation='relu')(inputs)
-x = layers.Dropout(0.3)(x)
-x = layers.Dense(64, activation='relu')(x)
-outputs = layers.Dense(1, activation='linear')(x)
-
-model = models.Model(inputs, outputs)
-model.compile(optimizer='adam', loss='mae', metrics=['mae'])
-
-# Train model
-model.fit(X_features, y_labels, validation_split=0.2, epochs=20, batch_size=64)
+# Extract features
+features = learn.get_X_preds(X_imf, with_input=False)
