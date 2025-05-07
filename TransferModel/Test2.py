@@ -15,7 +15,10 @@ from matplotlib import pyplot as plt
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import train_test_split
 
-def test_data(x_train, x_test, y_train, y_test):
+def forward_features_only(self, x):
+    return self.forward_features(x, return_patch_tokens=True, return_all_tokens=False)
+
+def plot_data(x_train, x_test, y_train, y_test):
     plt.figure(figsize=(8, 4))
     plt.hist(y_train, bins=50, alpha=0.6, label='Train', color='skyblue')
     plt.hist(y_test, bins=50, alpha=0.6, label='Test', color='salmon')
@@ -55,9 +58,6 @@ def test_data(x_train, x_test, y_train, y_test):
     plt.grid(True)
     plt.tight_layout()
     plt.show()
-
-def forward_features_only(self, x):
-    return self.forward_features(x, return_patch_tokens=True, return_all_tokens=False)
 
 def load_transfer_model():
     # Load checkpoint
@@ -110,6 +110,8 @@ def find_features(x_train, x_test, y_train, y_test):
             batch = x_train_tensor[i:i+batch_size]
             batch_features = model.forward_features_only(batch).cpu().numpy()
             train_features.append(batch_features)
+
+    model.forward_features_only = forward_features_only.__get__(model)
 
     with torch.no_grad():
         for i in range(0, len(x_test_tensor), batch_size):
@@ -174,7 +176,7 @@ def evaluate_model(model, x_test, y_test):
     plt.grid(True)
     plt.show()
 
-def create_bis_regressor_model(x_train, y_train):
+def create_bis_regressor_model(x_train, y_train, x_test, y_test):
 
     num_patches = x_train.shape[1]
     embedding_dim = x_train.shape[2]
@@ -182,7 +184,7 @@ def create_bis_regressor_model(x_train, y_train):
     model = Sequential([
         Bidirectional(LSTM(128, return_sequences=True), input_shape=(num_patches, embedding_dim)),
         LayerNormalization(),
-        #LSTM(128, return_sequences=False),
+        LSTM(128, return_sequences=False),
         Dense(256, activation='relu'),
         Dropout(0.2),
         Dense(128, activation='relu'),
@@ -221,26 +223,31 @@ def create_bis_regressor_model(x_train, y_train):
 
 dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
 
-x_train, y_train = dataset.x_train[10000], dataset.y_train[10000]
-x_test, y_test = dataset.x_test[10000], dataset.y_test[10000]
+x_train, y_train = dataset.x_train[:10000], dataset.y_train[:10000]
+x_test, y_test = dataset.x_test[:10000], dataset.y_test[:10000]
+print("x_train shape:", x_train.shape)
+print("x_test shape:", x_test.shape)
+print("y_train shape:", y_train.shape)
+print("y_test shape:", y_test.shape)
 
-test_data(x_train, x_test, y_train, y_test)
+plot_data(x_train, x_test, y_train, y_test)
 
-find_features(x_train, y_train, x_test, y_test)
+find_features(x_train, x_test, y_train, y_test)
 
 x_train = np.load("eegpt_train_features.npy")
 y_train = np.load("eegpt_train_labels.npy")
 x_test = np.load("eegpt_test_features.npy")
 y_test = np.load("eegpt_test_labels.npy")
 
-test_data(x_train, x_test, y_train, y_test)
+print("x_train shape:", x_train.shape)
+print("x_test shape:", x_test.shape)
+print("y_train shape:", y_train.shape)
+print("y_test shape:", y_test.shape)
 
-"""create_bis_regressor_model(x_train, y_train)
+plot_data(x_train, x_test, y_train, y_test)
+
+create_bis_regressor_model(x_train, y_train, x_test, y_test)
 
 model = load_model("eeg_regressor.keras")
 
-x_test_og = np.load("eegpt_test_features.npy")[2000:]
-y_test_og = np.load("eegpt_test_labels.npy")[2000:]
-print("x_test shape", x_test_og.shape)
-print("y_test shape", y_test_og.shape)
-evaluate_model(model, x_test_og, y_test_og)"""
+evaluate_model(model, x_test, y_test)

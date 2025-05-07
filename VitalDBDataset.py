@@ -69,18 +69,9 @@ class VitalDBDataset:
         dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter.joblib")
         dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/b_data_without_filter.joblib")
 
-        x_new, b_new, c_new= self.remove_excessive_samples(x,b,c)
+        x, b, c= self.remove_excessive_samples(x,b,c)
 
-        x_new=self.apply_EEMD_filter(x_new)
-
-        x_first_thousand=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x.joblib")
-        b_first_thousand= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b.joblib")
-        c_first_thousand=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")
-
-        x = np.concatenate([x_first_thousand, x_new], axis=0)
-        b = np.concatenate([b_first_thousand, b_new], axis=0)
-        c = np.concatenate([c_first_thousand, c_new], axis=0)
-
+        x =self.apply_EEMD_filter(x)
 
         dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x.joblib")
         dump(b, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b.joblib")
