@@ -1,8 +1,17 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0 = all logs, 1 = filter INFO, 2 = filter WARNING, 3 = filter ERROR
+import warnings
+import sys
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+sys.stderr = open(os.devnull, 'w')  # Redirects all stderr output
+
+import keras
 import numpy as np
 import torch
-from joblib import load
 from keras import Sequential
 from keras.src.optimizers import Adam
+from keras.src.regularizers import regularizers
 from keras.src.saving import load_model
 from sklearn.metrics import mean_absolute_error
 from EEGPT.downstream.Modules.models.EEGPT_mcae_finetune import EEGPTClassifier
@@ -10,10 +19,16 @@ import numpy as np
 from joblib import dump, load
 from keras.src.callbacks import ReduceLROnPlateau, EarlyStopping
 from keras.src.layers import MaxPooling1D, Bidirectional, LayerNormalization, LSTM, GlobalAveragePooling1D, Dense, \
-    Dropout
+    Dropout, Conv1D
 from matplotlib import pyplot as plt
 from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.model_selection import train_test_split
+
+import os
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+
+from torch import amp
+@amp.autocast("cuda")
+
 
 def forward_features_only(self, x):
     return self.forward_features(x, return_patch_tokens=True, return_all_tokens=False)
@@ -180,18 +195,27 @@ def create_bis_regressor_model(x_train, y_train, x_test, y_test):
 
     num_patches = x_train.shape[1]
     embedding_dim = x_train.shape[2]
+    #6.42
 
     model = Sequential([
-        Bidirectional(LSTM(128, return_sequences=True), input_shape=(num_patches, embedding_dim)),
+        #Conv1D(filters=128, kernel_size=3, activation='relu', input_shape=(num_patches, embedding_dim)),
+        Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.0005),input_shape=(num_patches, embedding_dim)),
+        #MaxPooling1D(pool_size=2),
+        Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(0.0005)),
+        Bidirectional(LSTM(256, return_sequences=True, kernel_regularizer=keras.regularizers.l2(0.0005))),
         LayerNormalization(),
-        LSTM(128, return_sequences=False),
-        Dense(256, activation='relu'),
-        Dropout(0.2),
-        Dense(128, activation='relu'),
+        LSTM(128, return_sequences=True, kernel_regularizer=keras.regularizers.l2(0.0005)),
+        #GlobalAveragePooling1D(),
+        LayerNormalization(),
+        Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.0005)),
+        Dropout(0.1),
+        Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(0.0005)),
+        Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(0.0005)),
         Dense(1)
+
     ])
 
-    model.compile(optimizer=Adam(learning_rate=1e-2), loss='mse', metrics=['mae'])
+    model.compile(optimizer=Adam(learning_rate=1e-4), loss='mse', metrics=['mae'])
 
     reduce_lr = ReduceLROnPlateau(
         monitor='val_mae',
@@ -221,10 +245,10 @@ def create_bis_regressor_model(x_train, y_train, x_test, y_test):
 
     model.save("eeg_regressor.keras")
 
-dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
+"""dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
 
-x_train, y_train = dataset.x_train[:10000], dataset.y_train[:10000]
-x_test, y_test = dataset.x_test[:10000], dataset.y_test[:10000]
+x_train, y_train = dataset.x_train, dataset.y_train
+x_test, y_test = dataset.x_test, dataset.y_test
 print("x_train shape:", x_train.shape)
 print("x_test shape:", x_test.shape)
 print("y_train shape:", y_train.shape)
@@ -232,7 +256,7 @@ print("y_test shape:", y_test.shape)
 
 plot_data(x_train, x_test, y_train, y_test)
 
-find_features(x_train, x_test, y_train, y_test)
+find_features(x_train, x_test, y_train, y_test)"""
 
 x_train = np.load("eegpt_train_features.npy")
 y_train = np.load("eegpt_train_labels.npy")
@@ -244,7 +268,7 @@ print("x_test shape:", x_test.shape)
 print("y_train shape:", y_train.shape)
 print("y_test shape:", y_test.shape)
 
-plot_data(x_train, x_test, y_train, y_test)
+#plot_data(x_train, x_test, y_train, y_test)
 
 create_bis_regressor_model(x_train, y_train, x_test, y_test)
 
