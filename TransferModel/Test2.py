@@ -198,14 +198,14 @@ def create_bis_regressor_model(x_train, y_train, x_test, y_test):
     #6.42
 
     model = Sequential([
-        #Conv1D(filters=128, kernel_size=3, activation='relu', input_shape=(num_patches, embedding_dim)),
+        Conv1D(filters=128, kernel_size=3, activation='relu', input_shape=(num_patches, embedding_dim)),
         Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.0005),input_shape=(num_patches, embedding_dim)),
-        #MaxPooling1D(pool_size=2),
+        MaxPooling1D(pool_size=2),
         Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(0.0005)),
         Bidirectional(LSTM(256, return_sequences=True, kernel_regularizer=keras.regularizers.l2(0.0005))),
         LayerNormalization(),
         LSTM(128, return_sequences=True, kernel_regularizer=keras.regularizers.l2(0.0005)),
-        #GlobalAveragePooling1D(),
+        GlobalAveragePooling1D(),
         LayerNormalization(),
         Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.0005)),
         Dropout(0.1),
@@ -268,7 +268,7 @@ print("x_test shape:", x_test.shape)
 print("y_train shape:", y_train.shape)
 print("y_test shape:", y_test.shape)
 
-#plot_data(x_train, x_test, y_train, y_test)
+plot_data(x_train, x_test, y_train, y_test)
 
 create_bis_regressor_model(x_train, y_train, x_test, y_test)
 
