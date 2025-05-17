@@ -3,7 +3,7 @@ from keras import Sequential
 from keras.src.optimizers import Adam
 from keras.src.callbacks import ReduceLROnPlateau, EarlyStopping
 from keras.src.layers import MaxPooling1D, Bidirectional, LayerNormalization, LSTM, GlobalAveragePooling1D, Dense, \
-    Dropout, Conv1D
+    Dropout, Conv1D, BatchNormalization
 import numpy as np
 from typing import List, Tuple
 from joblib import load
@@ -11,6 +11,8 @@ import torch
 import torch.nn.functional as F
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.preprocessing import StandardScaler
+
 from EEGPT.downstream.Modules.models.EEGPT_mcae_finetune import EEGPTClassifier
 import pandas as pd
 import seaborn as sns
@@ -21,7 +23,6 @@ import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
-# === Utility ===
 def get_device(force_cpu=False):
     if force_cpu or not torch.cuda.is_available():
         print("⚙️ Using CPU")
@@ -29,9 +30,8 @@ def get_device(force_cpu=False):
     print("⚡ Using GPU")
     return torch.device("cuda")
 
-
 def forward_features_only(self, x):
-    return self.forward_features(x, return_patch_tokens=True, return_all_tokens=False)
+    return self.forward_features(x, return_patch_tokens=False)
 
 # === EEGPT Model Loader ===
 def load_transfer_model(ckpt_path: str, channel_names: List[str]) -> torch.nn.Module:
@@ -63,7 +63,6 @@ def load_transfer_model(ckpt_path: str, channel_names: List[str]) -> torch.nn.Mo
     model.eval()
     return model
 
-
 # === EEGPT Wrapper ===
 class EEGPTWrapper(BaseEstimator, ClassifierMixin):
     def __init__(self, model):
@@ -87,24 +86,22 @@ class EEGPTWrapper(BaseEstimator, ClassifierMixin):
         with torch.no_grad():
             for i in range(0, len(X), batch_size):
                 batch = torch.tensor(X[i:i+batch_size], dtype=torch.float32).to(self.device)
-                logits = self.model(batch)
-                probs = F.softmax(logits, dim=1)
-                results.append(probs.cpu())
+                # 🧠 Use internal feature extractor instead of full model output
+                features = self.model.forward_features_only(batch)
+                # 🧠 Pool or flatten if needed (depends on your model output shape)
+                if features.ndim > 2:
+                    features = features.mean(dim=1)  # global average pooling over tokens/time
+                results.append(features.cpu())
         return torch.cat(results).numpy()
 
-
 # === Feature Extraction ===
-def extract_softmax_features(models: List[EEGPTWrapper],
-                             x_data_list: List[np.ndarray],
-                             batch_size: int = 64) -> np.ndarray:
+def extract_softmax_features(models: List[EEGPTWrapper], x_data_list: List[np.ndarray], batch_size: int = 64) -> np.ndarray:
     all_probs = [model.predict_proba(x, batch_size=batch_size) for model, x in zip(models, x_data_list)]
     stacked_probs = np.stack(all_probs, axis=1)
     return stacked_probs.reshape(stacked_probs.shape[0], -1)
 
 
-def generate_voting_features(x_train: np.ndarray, x_test: np.ndarray,
-                             y_train: np.ndarray, y_test: np.ndarray,
-                             ckpt_path: str, channels: List[str]) -> Tuple[np.ndarray, np.ndarray]:
+def generate_voting_features(x_train: np.ndarray, x_test: np.ndarray, y_train: np.ndarray, y_test: np.ndarray, ckpt_path: str, channels: List[str]) -> Tuple[np.ndarray, np.ndarray]:
     print("🧠 Extracting IMF-specific softmax features...")
 
     features_train, features_test = [], []
@@ -148,21 +145,20 @@ def generate_voting_features(x_train: np.ndarray, x_test: np.ndarray,
 
     return x_train_out, x_test_out
 
-
 # === BIS Regressor ===
 def create_bis_regressor_model(x_train, y_train, x_test, y_test):
-    x_train = np.expand_dims(x_train, axis=-1)
-    x_test = np.expand_dims(x_test, axis=-1)
 
     model = Sequential([
-        Conv1D(64, kernel_size=2, activation='relu', input_shape=(x_train.shape[1], 1)),
-        Dense(128, activation='relu', kernel_regularizer='l2'),
-        GlobalAveragePooling1D(),
-        Dropout(0.1),
+        Dense(256, activation='relu', input_shape=(x_train.shape[1],)),
+        BatchNormalization(),
+        Dense(128, activation='relu'),
         Dense(64, activation='relu'),
+        BatchNormalization(),
         Dense(1)
     ])
-    model.compile(optimizer=Adam(1e-4), loss='mse', metrics=['mae'])
+
+
+    model.compile(optimizer=Adam(1e-3), loss='mse', metrics=['mae'])
 
     callbacks = [
         EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=1),
@@ -319,7 +315,6 @@ def analyze_dataset(x_raw, y_raw, fs=256, label="Train"):
         plt.show()
 
 
-# === Main Execution ===
 dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
 
 x_train_raw, y_train = dataset.x_train, dataset.y_train
@@ -335,9 +330,20 @@ channel_names = ['Fp1', 'Fp2', 'F3']
 print("x_train_raw shape:", x_train_raw.shape)
 print("x_test_raw shape:", x_test_raw.shape)
 
-x_train, x_test = generate_voting_features(x_train_raw, x_test_raw, y_train, y_test,
-                                           ckpt_path, channel_names)
+x_train, x_test = generate_voting_features(x_train_raw, x_test_raw, y_train, y_test, ckpt_path, channel_names)
+
+#x_train = np.load("voted_train_features.npy")
+#x_test = np.load("voted_test_features.npy")
+#y_train = np.load("voted_train_labels.npy")
+#y_test = np.load("voted_test_labels.npy")
+
+
+# ✅ Normalize softmax features before training the regressor
+scaler = StandardScaler()
+x_train = scaler.fit_transform(x_train)
+x_test = scaler.transform(x_test)
+
 model = create_bis_regressor_model(x_train, y_train, x_test, y_test)
 evaluate_model(model, x_test, y_test)
-analyze_softmax_feature_correlation(x_test, y_test)
+#analyze_softmax_feature_correlation(x_test, y_test)
 
