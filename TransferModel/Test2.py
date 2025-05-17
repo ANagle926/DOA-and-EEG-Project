@@ -1,10 +1,10 @@
-import os
+"""import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0 = all logs, 1 = filter INFO, 2 = filter WARNING, 3 = filter ERROR
 import warnings
 import sys
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
-sys.stderr = open(os.devnull, 'w')  # Redirects all stderr output
+sys.stderr = open(os.devnull, 'w')  # Redirects all stderr output"""
 
 import keras
 import numpy as np
@@ -22,17 +22,14 @@ from keras.src.layers import MaxPooling1D, Bidirectional, LayerNormalization, LS
     Dropout, Conv1D
 from matplotlib import pyplot as plt
 from sklearn.metrics import mean_absolute_error, r2_score
+from scipy.signal import periodogram
+import psutil
 
 import os
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
 from torch import amp
 @amp.autocast("cuda")
-
-
-def forward_features_only(self, x):
-    return self.forward_features(x, return_patch_tokens=True, return_all_tokens=False)
-
 def plot_data(x_train, x_test, y_train, y_test):
     plt.figure(figsize=(8, 4))
     plt.hist(y_train, bins=50, alpha=0.6, label='Train', color='skyblue')
@@ -73,6 +70,106 @@ def plot_data(x_train, x_test, y_train, y_test):
     plt.grid(True)
     plt.tight_layout()
     plt.show()
+
+    plot_amplitude_histograms(x_train, x_test)
+    plot_frequency_histograms(x_train, x_test)
+
+def compute_dominant_frequencies(data, fs=256):
+    """
+    Computes dominant frequency per IMF channel for each sample.
+    Returns: (samples, 3) array of dominant frequencies.
+    """
+    dominant_freqs = np.zeros((data.shape[0], 3))
+
+    for i in range(data.shape[0]):
+        for imf_idx in range(3):  # Assuming 3 IMFs
+            freqs, power = periodogram(data[i, :, imf_idx], fs=fs)
+            dominant_freq = freqs[np.argmax(power)]
+            dominant_freqs[i, imf_idx] = dominant_freq
+
+    return dominant_freqs
+
+def compute_average_frequencies(data, fs=256):
+    """
+    Computes average frequency (spectral centroid) per IMF channel per sample.
+    Returns: (samples, 3) array of weighted average frequencies.
+    """
+    avg_freqs = np.zeros((data.shape[0], 3))
+
+    for i in range(data.shape[0]):
+        for imf_idx in range(3):
+            freqs, power = periodogram(data[i, :, imf_idx], fs=fs)
+            total_power = np.sum(power)
+            if total_power > 0:
+                avg = np.sum(freqs * power) / total_power
+            else:
+                avg = 0
+            avg_freqs[i, imf_idx] = avg
+
+    return avg_freqs
+
+def plot_frequency_histograms(x_train, x_test, fs=256):
+    train_freqs_dominant = compute_dominant_frequencies(x_train, fs)
+    test_freqs_dominant = compute_dominant_frequencies(x_test, fs)
+
+    imf_labels = ['IMF 1', 'IMF 2', 'IMF 3']
+    for i in range(3):
+        plt.figure(figsize=(8, 4))
+        plt.hist(train_freqs_dominant[:, i], bins=50, alpha=0.6, label='Train', color='skyblue')
+        plt.hist(test_freqs_dominant[:, i], bins=50, alpha=0.6, label='Test', color='salmon')
+        plt.title(f'Dominant Frequency Distribution - {imf_labels[i]}')
+        plt.xlabel('Frequency (Hz)')
+        plt.ylabel('Count')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+    train_freqs_average = compute_average_frequencies(x_train, fs)
+    test_freqs_average = compute_average_frequencies(x_test, fs)
+
+    imf_labels = ['IMF 1', 'IMF 2', 'IMF 3']
+    for i in range(3):
+        plt.figure(figsize=(8, 4))
+        plt.hist(train_freqs_average[:, i], bins=50, alpha=0.6, label='Train', color='skyblue')
+        plt.hist(test_freqs_average[:, i], bins=50, alpha=0.6, label='Test', color='salmon')
+        plt.title(f'Average Frequency Distribution - {imf_labels[i]}')
+        plt.xlabel('Frequency (Hz)')
+        plt.ylabel('Count')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+def compute_average_amplitudes(data):
+    """
+    Computes average absolute amplitude per IMF channel per sample.
+    Returns: (samples, 3) array of amplitudes.
+    """
+    return np.mean(np.abs(data), axis=1)
+
+def plot_amplitude_histograms(x_train, x_test):
+    train_amplitudes = compute_average_amplitudes(x_train)
+    test_amplitudes = compute_average_amplitudes(x_test)
+
+    imf_labels = ['IMF 1', 'IMF 2', 'IMF 3']
+    for i in range(3):
+        plt.figure(figsize=(8, 4))
+        plt.hist(train_amplitudes[:, i], bins=50, alpha=0.6, label='Train', color='skyblue')
+        plt.hist(test_amplitudes[:, i], bins=50, alpha=0.6, label='Test', color='salmon')
+        plt.title(f'Average Amplitude Distribution - {imf_labels[i]}')
+        plt.xlabel('Amplitude')
+        plt.ylabel('Count')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+def moving_avg(signal, window=15):
+    return np.convolve(signal, np.ones(window)/window, mode='same')
+
+def forward_features_only(self, x):
+    return self.forward_features(x, return_patch_tokens=True, return_all_tokens=False)
 
 def load_transfer_model():
     # Load checkpoint
@@ -145,8 +242,6 @@ def find_features(x_train, x_test, y_train, y_test):
     print(f"✅ Saved features: eegpt_train_features.npy  shape: {train_features.shape}")
     print(f"✅ Saved labels: eegpt_train_labels.npy      shape: {y_train.shape}")
 
-def moving_avg(signal, window=15):
-    return np.convolve(signal, np.ones(window)/window, mode='same')
 
 def evaluate_model(model, x_test, y_test):
 
@@ -245,7 +340,7 @@ def create_bis_regressor_model(x_train, y_train, x_test, y_test):
 
     model.save("eeg_regressor.keras")
 
-"""dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
+dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
 
 x_train, y_train = dataset.x_train, dataset.y_train
 x_test, y_test = dataset.x_test, dataset.y_test
@@ -256,7 +351,7 @@ print("y_test shape:", y_test.shape)
 
 plot_data(x_train, x_test, y_train, y_test)
 
-find_features(x_train, x_test, y_train, y_test)"""
+#find_features(x_train, x_test, y_train, y_test)"""
 
 x_train = np.load("eegpt_train_features.npy")
 y_train = np.load("eegpt_train_labels.npy")
