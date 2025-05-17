@@ -1,4 +1,5 @@
 import joblib
+import keras
 from keras import Sequential
 from keras.src.optimizers import Adam
 from keras.src.callbacks import ReduceLROnPlateau, EarlyStopping
@@ -12,6 +13,7 @@ import torch.nn.functional as F
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
+from tensorflow.python.keras.regularizers import l2
 
 from EEGPT.downstream.Modules.models.EEGPT_mcae_finetune import EEGPTClassifier
 import pandas as pd
@@ -149,11 +151,21 @@ def generate_voting_features(x_train: np.ndarray, x_test: np.ndarray, y_train: n
 def create_bis_regressor_model(x_train, y_train, x_test, y_test):
 
     model = Sequential([
-        Dense(256, activation='relu', input_shape=(x_train.shape[1],)),
+        Dense(512, activation='relu', input_shape=(x_train.shape[1],), kernel_regularizer=keras.regularizers.l2(1e-4)),
         BatchNormalization(),
-        Dense(128, activation='relu'),
-        Dense(64, activation='relu'),
+        Dropout(0.3),
+
+        Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-4)),
         BatchNormalization(),
+        Dropout(0.2),
+
+        Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-4)),
+        BatchNormalization(),
+        Dropout(0.1),
+
+        Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-4)),
+        BatchNormalization(),
+
         Dense(1)
     ])
 
@@ -166,7 +178,7 @@ def create_bis_regressor_model(x_train, y_train, x_test, y_test):
     ]
 
     model.fit(x_train, y_train, validation_data=(x_test, y_test),
-              epochs=80, batch_size=64, callbacks=callbacks, verbose=1)
+              epochs=80, batch_size=32, callbacks=callbacks, verbose=1)
 
     model.save("eeg_regressor.keras")
     return model
@@ -315,7 +327,7 @@ def analyze_dataset(x_raw, y_raw, fs=256, label="Train"):
         plt.show()
 
 
-dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
+"""dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
 
 x_train_raw, y_train = dataset.x_train, dataset.y_train
 x_test_raw, y_test = dataset.x_test, dataset.y_test
@@ -330,12 +342,12 @@ channel_names = ['Fp1', 'Fp2', 'F3']
 print("x_train_raw shape:", x_train_raw.shape)
 print("x_test_raw shape:", x_test_raw.shape)
 
-x_train, x_test = generate_voting_features(x_train_raw, x_test_raw, y_train, y_test, ckpt_path, channel_names)
+x_train, x_test = generate_voting_features(x_train_raw, x_test_raw, y_train, y_test, ckpt_path, channel_names)"""
 
-#x_train = np.load("voted_train_features.npy")
-#x_test = np.load("voted_test_features.npy")
-#y_train = np.load("voted_train_labels.npy")
-#y_test = np.load("voted_test_labels.npy")
+x_train = np.load("voted_train_features.npy")
+x_test = np.load("voted_test_features.npy")
+y_train = np.load("voted_train_labels.npy")
+y_test = np.load("voted_test_labels.npy")
 
 
 # ✅ Normalize softmax features before training the regressor
