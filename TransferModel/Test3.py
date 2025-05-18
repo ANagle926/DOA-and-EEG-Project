@@ -1,73 +1,30 @@
-import joblib
-import keras
 import shap
-from keras import Sequential, Input, Model
-from keras.src.optimizers import Adam
-from keras.src.callbacks import ReduceLROnPlateau, EarlyStopping
-from keras.src.layers import MaxPooling1D, Bidirectional, LayerNormalization, LSTM, GlobalAveragePooling1D, Dense, \
-    Dropout, Conv1D, BatchNormalization, GaussianNoise
 import numpy as np
 from typing import List, Tuple
-from joblib import load
 import torch
-import torch.nn.functional as F
+from keras import Sequential
+from keras.src.saving import load_model
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
-from tensorflow.python.keras.regularizers import l2
-from keras.src.layers import Dense, Multiply, Softmax, Lambda, Concatenate
-
-
 from EEGPT.downstream.Modules.models.EEGPT_mcae_finetune import EEGPTClassifier
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from joblib import load
 import gc
 import os
+from keras.src.layers import Input, Dense, Dropout, BatchNormalization, GaussianNoise
+from keras.src.optimizers import Adam
+from keras.src.callbacks import EarlyStopping, ReduceLROnPlateau
+import keras
+from scipy.signal import periodogram
+from sklearn.inspection import permutation_importance
+import tensorflow as tf
+
+
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-
-def get_device(force_cpu=False):
-    if force_cpu or not torch.cuda.is_available():
-        print("⚙️ Using CPU")
-        return torch.device("cpu")
-    print("⚡ Using GPU")
-    return torch.device("cuda")
-
-def forward_features_only(self, x):
-    return self.forward_features(x, return_patch_tokens=False)
-
-
-def load_transfer_model(ckpt_path: str, channel_names: List[str]) -> torch.nn.Module:
-    try:
-        # First try loading to CUDA
-        device = torch.device("cuda")
-        checkpoint = torch.load(ckpt_path, map_location=device)
-    except RuntimeError as e:
-        print(f"⚠️ CUDA failed: {e}. Switching to CPU.")
-        device = torch.device("cpu")
-        checkpoint = torch.load(ckpt_path, map_location=device)
-
-    model = EEGPTClassifier(
-        eeg_size=(3, 1024),
-        patch_size=64,
-        emb_dim=768,
-        depth=12,
-        num_heads=12,
-        mlp_ratio=4,
-        num_classes=2,
-        use_channels_names=channel_names,
-        desired_time_len=1024
-    )
-    model.load_state_dict(checkpoint['state_dict'], strict=False)
-    model.forward_features_only = forward_features_only.__get__(model)
-    for param in model.parameters():
-        param.requires_grad = False
-    model.to(device)
-    model.eval()
-    return model
-
+from sklearn.base import BaseEstimator, RegressorMixin
 
 class EEGPTWrapper(BaseEstimator, ClassifierMixin):
     def __init__(self, model):
@@ -99,117 +56,12 @@ class EEGPTWrapper(BaseEstimator, ClassifierMixin):
                 results.append(features.cpu())
         return torch.cat(results).numpy()
 
-def extract_softmax_features(models: List[EEGPTWrapper], x_data_list: List[np.ndarray], batch_size: int = 64) -> np.ndarray:
-    all_probs = [model.predict_proba(x, batch_size=batch_size) for model, x in zip(models, x_data_list)]
-    stacked_probs = np.stack(all_probs, axis=1)
-    return stacked_probs.reshape(stacked_probs.shape[0], -1)
-
-def generate_voting_features(x_train: np.ndarray, x_test: np.ndarray, y_train: np.ndarray, y_test: np.ndarray, ckpt_path: str, channels: List[str]) -> Tuple[np.ndarray, np.ndarray]:
-    print("🧠 Extracting IMF-specific softmax features...")
-
-    features_train, features_test = [], []
-
-    for i in range(3):
-        print(f" - Processing IMF {i+1}")
-
-        # ✅ Clear memory BEFORE loading model
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        # Load model just for this IMF
-        model = load_transfer_model(ckpt_path, channel_names=channels)
-        wrapper = EEGPTWrapper(model)
-
-        # Prepare IMF-specific input
-        x_train_i = np.expand_dims(x_train[:, :, i], axis=1)
-        x_test_i = np.expand_dims(x_test[:, :, i], axis=1)
-
-        # Run inference in batches (GPU-safe)
-        probs_train = wrapper.predict_proba(x_train_i, batch_size=64)
-        probs_test = wrapper.predict_proba(x_test_i, batch_size=64)
-
-        features_train.append(probs_train)
-        features_test.append(probs_test)
-
-        # ✅ Delete model after use
-        del model, wrapper
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    # Stack all IMF features along feature axis
-    x_train_out = np.concatenate(features_train, axis=1)
-    x_test_out = np.concatenate(features_test, axis=1)
-
-    print(f"✅ Extracted features: train={x_train_out.shape}, test={x_test_out.shape}")
-    np.save("voted_train_features.npy", x_train_out)
-    np.save("voted_test_features.npy", x_test_out)
-    np.save("voted_train_labels.npy", y_train)
-    np.save("voted_test_labels.npy", y_test)
-
-    return x_train_out, x_test_out
-
-def run_shap_analysis(model, background_data, sample_data):
-    """
-    Compute and plot SHAP feature importances using DeepExplainer.
-
-    Parameters:
-    - model: trained Keras model
-    - background_data: typically a subset of training data (e.g., x_train[:100])
-    - sample_data: subset of data to explain (e.g., x_test[:100])
-    """
-    explainer = shap.DeepExplainer(model, background_data)
-    shap_values = explainer(sample_data)
-    shap.summary_plot(shap_values, sample_data)
-
-def create_bis_regressor_model(x_train, y_train, x_test, y_test):
-
-    input_layer = Input(shape=(x_train.shape[1],))
-    x = GaussianNoise(0.3)(input_layer)
-
-    x = Dense(512, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.6)(x)
-
-    x = Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.7)(x)
-
-    x = Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.7)(x)
-
-    x = Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
-    x = BatchNormalization()(x)
-
-    output = Dense(1)(x)
-    model = Model(inputs=input_layer, outputs=output)
-
-    # Compile model
-    model.compile(
-        optimizer=Adam(1e-4),
-        loss=keras.losses.Huber(delta=1.0),
-        metrics=['mae']
-    )
-
-    # Callbacks
-    callbacks = [
-        EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=1),
-        ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-8, verbose=1)
-    ]
-
-    # Train model
-    model.fit(
-        x_train, y_train,
-        validation_data=(x_test, y_test),
-        epochs=80,
-        batch_size=32,
-        callbacks=callbacks,
-        verbose=1
-    )
-
-    model.save("eeg_regressor.keras")
-    return model
-
+def get_device(force_cpu=False):
+    if force_cpu or not torch.cuda.is_available():
+        print("⚙️ Using CPU")
+        return torch.device("cpu")
+    print("⚡ Using GPU")
+    return torch.device("cuda")
 
 def evaluate_model(model, x_test, y_test):
     if x_test.ndim == 2:
@@ -279,7 +131,18 @@ def analyze_softmax_feature_correlation(x_softmax: np.ndarray, y_true: np.ndarra
 
     return corrs  # return correlations if needed
 
-from scipy.signal import periodogram
+def run_shap_analysis(model, background_data, sample_data):
+    """
+    Compute and plot SHAP feature importances using DeepExplainer.
+
+    Parameters:
+    - model: trained Keras model
+    - background_data: typically a subset of training data (e.g., x_train[:100])
+    - sample_data: subset of data to explain (e.g., x_test[:100])
+    """
+    explainer = shap.DeepExplainer(model, background_data)
+    shap_values = explainer(sample_data)
+    shap.summary_plot(shap_values, sample_data)
 
 def analyze_dataset(x_raw, y_raw, fs=256, label="Train"):
     """
@@ -353,6 +216,268 @@ def analyze_dataset(x_raw, y_raw, fs=256, label="Train"):
         plt.tight_layout()
         plt.show()
 
+def forward_features_only(self, x):
+    return self.forward_features(x, return_patch_tokens=False)
+
+def load_transfer_model(ckpt_path: str, channel_names: List[str]) -> torch.nn.Module:
+    try:
+        # First try loading to CUDA
+        device = torch.device("cuda")
+        checkpoint = torch.load(ckpt_path, map_location=device)
+    except RuntimeError as e:
+        print(f"⚠️ CUDA failed: {e}. Switching to CPU.")
+        device = torch.device("cpu")
+        checkpoint = torch.load(ckpt_path, map_location=device)
+
+    model = EEGPTClassifier(
+        eeg_size=(3, 1024),
+        patch_size=64,
+        emb_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4,
+        num_classes=2,
+        use_channels_names=channel_names,
+        desired_time_len=1024
+    )
+    model.load_state_dict(checkpoint['state_dict'], strict=False)
+    model.forward_features_only = forward_features_only.__get__(model)
+    for param in model.parameters():
+        param.requires_grad = False
+    model.to(device)
+    model.eval()
+    return model
+
+def extract_softmax_features(models: List[EEGPTWrapper], x_data_list: List[np.ndarray], batch_size: int = 64) -> np.ndarray:
+    all_probs = [model.predict_proba(x, batch_size=batch_size) for model, x in zip(models, x_data_list)]
+    stacked_probs = np.stack(all_probs, axis=1)
+    return stacked_probs.reshape(stacked_probs.shape[0], -1)
+
+def generate_voting_features(x_train: np.ndarray, x_test: np.ndarray, y_train: np.ndarray, y_test: np.ndarray, ckpt_path: str, channels: List[str]) -> Tuple[np.ndarray, np.ndarray]:
+    print("🧠 Extracting IMF-specific softmax features...")
+
+    features_train, features_test = [], []
+
+    for i in range(3):
+        print(f" - Processing IMF {i+1}")
+
+        # ✅ Clear memory BEFORE loading model
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # Load model just for this IMF
+        model = load_transfer_model(ckpt_path, channel_names=channels)
+        wrapper = EEGPTWrapper(model)
+
+        # Prepare IMF-specific input
+        x_train_i = np.expand_dims(x_train[:, :, i], axis=1)
+        x_test_i = np.expand_dims(x_test[:, :, i], axis=1)
+
+        # Run inference in batches (GPU-safe)
+        probs_train = wrapper.predict_proba(x_train_i, batch_size=64)
+        probs_test = wrapper.predict_proba(x_test_i, batch_size=64)
+
+        features_train.append(probs_train)
+        features_test.append(probs_test)
+
+        # ✅ Delete model after use
+        del model, wrapper
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    # Stack all IMF features along feature axis
+    x_train_out = np.concatenate(features_train, axis=1)
+    x_test_out = np.concatenate(features_test, axis=1)
+
+    print(f"✅ Extracted features: train={x_train_out.shape}, test={x_test_out.shape}")
+    np.save("voted_train_features.npy", x_train_out)
+    np.save("voted_test_features.npy", x_test_out)
+    np.save("voted_train_labels.npy", y_train)
+    np.save("voted_test_labels.npy", y_test)
+
+    return x_train_out, x_test_out
+
+def create_bis_regressor_model(x_train, y_train, x_test, y_test):
+    model = Sequential([
+        GaussianNoise(0.3, input_shape=(x_train.shape[1],)),
+
+        Dense(512, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+        BatchNormalization(),
+        Dropout(0.6),
+
+        Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+        BatchNormalization(),
+        Dropout(0.7),
+
+        Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+        BatchNormalization(),
+        Dropout(0.7),
+
+        Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+        BatchNormalization(),
+
+        Dense(1)
+    ])
+
+    model.compile(
+        optimizer=Adam(1e-4),
+        loss=keras.losses.Huber(delta=1.0),
+        metrics=['mae']
+    )
+
+    callbacks = [
+        EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=1),
+        ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-8, verbose=1)
+    ]
+
+    model.fit(
+        x_train, y_train,
+        validation_data=(x_test, y_test),
+        epochs=80,
+        batch_size=32,
+        callbacks=callbacks,
+        verbose=1
+    )
+
+    model.save("eeg_regressor.keras")
+    return model
+
+def train_ensemble(x_train, y_train, x_test, y_test, n_models=5):
+    preds = []
+    for i in range(n_models):
+        print(f"\n🔁 Training model {i + 1}/{n_models}")
+
+        # Vary dropout and GaussianNoise upward
+        noise_std = np.random.choice([0.3, 0.4, 0.5])
+        dropout_1 = np.random.choice([0.5, 0.6, 0.7])
+        dropout_2 = np.random.choice([dropout_1, dropout_1+0.1])
+        dropout_3 = np.random.choice([dropout_2, dropout_2+0.1])
+        dropout_3 = min(dropout_3, 0.8)
+
+        batch_size = np.random.choice([16, 32])
+        lr = np.random.choice([1e-4, 5e-5])
+
+        model = Sequential([
+            GaussianNoise(noise_std, input_shape=(x_train.shape[1],)),
+
+            Dense(512, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+            BatchNormalization(),
+            Dropout(dropout_1),
+
+            Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+            BatchNormalization(),
+            Dropout(dropout_2),
+
+            Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+            BatchNormalization(),
+            Dropout(dropout_3),
+
+            Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+            BatchNormalization(),
+
+            Dense(1)
+        ])
+
+        model.compile(
+            optimizer=Adam(lr),
+            loss=keras.losses.Huber(delta=1.0),
+            metrics=['mae']
+        )
+
+        callbacks = [
+            EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=0),
+            ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-8, verbose=0)
+        ]
+
+        model.fit(
+            x_train, y_train,
+            validation_data=(x_test, y_test),
+            epochs=80,
+            batch_size=batch_size,
+            callbacks=callbacks,
+            verbose=0
+        )
+
+        model.save(f'ensemble_model_{i}.keras')
+        y_pred = model.predict(x_test, verbose=1)
+        preds.append(y_pred)
+        mae = mean_absolute_error(y_test, y_pred)
+        print(f"🧪 noise={noise_std}, dropout=({dropout_1}, {dropout_2}, {dropout_3}), batch_size={batch_size}, lr={lr}")
+        print(f"📌 Model {i + 1} MAE: {mae:.4f}")
+
+
+    ensemble_preds = np.mean(preds, axis=0)
+    ensemble_mae = mean_absolute_error(y_test, ensemble_preds)
+    print(f"\n📊 Ensemble MAE: {ensemble_mae:.4f}")
+    return ensemble_preds, ensemble_mae
+
+class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
+    def __init__(self, model):
+        self.model = model
+
+    def fit(self, X, y):
+        return self  # Already trained
+
+    def predict(self, X):
+        if hasattr(X, 'numpy'):
+            X = X.numpy()
+        X = np.asarray(X).astype(np.float32)
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+        return self.model(X, training=False).numpy().flatten()  # 🔥 FAST path
+
+def perform_permutation_importance(x_test, y_test, model):
+    x_test = np.asarray(x_test).astype(np.float32)
+    x_test_clean = tf.convert_to_tensor(x_test) if isinstance(x_test, np.ndarray) else x_test
+    x_test_clean = x_test_clean.numpy() if hasattr(x_test_clean, 'numpy') else x_test_clean
+    x_test_clean = np.asarray(x_test_clean).astype(np.float32)
+    print("here")
+
+    # 2. Wrap the model
+    wrapped_model = KerasRegressorWrapper(model)
+    print("created model")
+
+    # 3. Run permutation importance
+    result = permutation_importance(
+        wrapped_model,
+        x_test_clean,  # ✅ use cleaned input here
+        y_test,
+        n_repeats=10,
+        random_state=42,
+        scoring='neg_mean_absolute_error'
+    )
+    print("ran permutation importance")
+
+
+    # 4. Generate feature names for display
+    num_features = x_test_clean.shape[1]
+    feature_names = [f'f{i}' for i in range(num_features)]
+    print("generated feature names")
+
+    # 5. Display importance dataframe
+    importance_df = pd.DataFrame({
+        'feature': feature_names,
+        'importance': result.importances_mean,
+        'std': result.importances_std
+    }).sort_values(by='importance', ascending=False)
+
+    print(importance_df)
+
+    plot_feature_importance(importance_df)
+
+def plot_feature_importance(importance_df, top_n=20):
+    top_features = importance_df.head(top_n)[::-1]  # reverse for horizontal bar chart
+
+    plt.figure(figsize=(10, 6))
+    plt.barh(top_features['feature'], top_features['importance'], xerr=top_features['std'])
+    plt.xlabel('Mean Decrease in MAE')
+    plt.ylabel('Feature')
+    plt.title(f'Top {top_n} Important Features')
+    plt.tight_layout()
+    plt.grid(True)
+    plt.show()
+
+
 
 """dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
 
@@ -376,13 +501,17 @@ x_test = np.load("voted_test_features.npy")
 y_train = np.load("voted_train_labels.npy")
 y_test = np.load("voted_test_labels.npy")
 
-
-# ✅ Normalize softmax features before training the regressor
 scaler = StandardScaler()
 x_train = scaler.fit_transform(x_train)
 x_test = scaler.transform(x_test)
 
-model = create_bis_regressor_model(x_train, y_train, x_test, y_test)
-evaluate_model(model, x_test, y_test)
-#analyze_softmax_feature_correlation(x_test, y_test)
+#model = create_bis_regressor_model(x_train, y_train, x_test, y_test)
+
+model = load_model("eeg_regressor.keras")
+perform_permutation_importance(x_test[:200], y_test[:200], model)
+
+#evaluate_model(model, x_test, y_test)
+#ensemble_preds, ensemble_mae = train_ensemble(x_train, y_train, x_test, y_test, n_models=8)
+
+
 
