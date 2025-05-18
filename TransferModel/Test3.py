@@ -1,10 +1,10 @@
 import joblib
 import keras
-from keras import Sequential
+from keras import Sequential, Input, Model
 from keras.src.optimizers import Adam
 from keras.src.callbacks import ReduceLROnPlateau, EarlyStopping
 from keras.src.layers import MaxPooling1D, Bidirectional, LayerNormalization, LSTM, GlobalAveragePooling1D, Dense, \
-    Dropout, Conv1D, BatchNormalization
+    Dropout, Conv1D, BatchNormalization, GaussianNoise
 import numpy as np
 from typing import List, Tuple
 from joblib import load
@@ -14,6 +14,8 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
 from tensorflow.python.keras.regularizers import l2
+from keras.src.layers import Dense, Multiply, Softmax, Lambda, Concatenate
+
 
 from EEGPT.downstream.Modules.models.EEGPT_mcae_finetune import EEGPTClassifier
 import pandas as pd
@@ -150,38 +152,61 @@ def generate_voting_features(x_train: np.ndarray, x_test: np.ndarray, y_train: n
 # === BIS Regressor ===
 def create_bis_regressor_model(x_train, y_train, x_test, y_test):
 
-    model = Sequential([
-        Dense(512, activation='relu', input_shape=(x_train.shape[1],), kernel_regularizer=keras.regularizers.l2(1e-4)),
-        BatchNormalization(),
-        Dropout(0.3),
+    input_layer = Input(shape=(x_train.shape[1],))
+    x = GaussianNoise(0.3)(input_layer)
 
-        Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-4)),
-        BatchNormalization(),
-        Dropout(0.2),
+    x = Dense(512, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.2)(x)
 
-        Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-4)),
-        BatchNormalization(),
-        Dropout(0.1),
+    x = Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
+    #x = attention_block(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.3)(x)
 
-        Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-4)),
-        BatchNormalization(),
+    x = Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
+    #x = attention_block(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.4)(x)
 
-        Dense(1)
-    ])
+    x = Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
+    x = BatchNormalization()(x)
 
+    output = Dense(1)(x)
+    model = Model(inputs=input_layer, outputs=output)
 
-    model.compile(optimizer=Adam(1e-3), loss='mse', metrics=['mae'])
+    # Compile model
+    model.compile(
+        optimizer=Adam(1e-4),
+        loss=keras.losses.Huber(delta=1.0),
+        metrics=['mae']
+    )
 
+    # Callbacks
     callbacks = [
         EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=1),
-        ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-6, verbose=1)
+        ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-8, verbose=1)
     ]
 
-    model.fit(x_train, y_train, validation_data=(x_test, y_test),
-              epochs=80, batch_size=32, callbacks=callbacks, verbose=1)
+    # Train model
+    model.fit(
+        x_train, y_train,
+        validation_data=(x_test, y_test),
+        epochs=80,
+        batch_size=32,
+        callbacks=callbacks,
+        verbose=1
+    )
 
     model.save("eeg_regressor.keras")
     return model
+
+def attention_block(x):
+    scores = Dense(x.shape[-1])(x)         # Raw weights
+    weights = Softmax()(scores)            # Normalize
+    attended = Multiply()([x, weights])    # Apply attention
+    return attended
+
 
 # === Evaluation ===
 def evaluate_model(model, x_test, y_test):
