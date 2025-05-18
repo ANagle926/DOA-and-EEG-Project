@@ -1,5 +1,6 @@
 import joblib
 import keras
+import shap
 from keras import Sequential, Input, Model
 from keras.src.optimizers import Adam
 from keras.src.callbacks import ReduceLROnPlateau, EarlyStopping
@@ -37,7 +38,7 @@ def get_device(force_cpu=False):
 def forward_features_only(self, x):
     return self.forward_features(x, return_patch_tokens=False)
 
-# === EEGPT Model Loader ===
+
 def load_transfer_model(ckpt_path: str, channel_names: List[str]) -> torch.nn.Module:
     try:
         # First try loading to CUDA
@@ -67,7 +68,7 @@ def load_transfer_model(ckpt_path: str, channel_names: List[str]) -> torch.nn.Mo
     model.eval()
     return model
 
-# === EEGPT Wrapper ===
+
 class EEGPTWrapper(BaseEstimator, ClassifierMixin):
     def __init__(self, model):
         self.model = model
@@ -98,12 +99,10 @@ class EEGPTWrapper(BaseEstimator, ClassifierMixin):
                 results.append(features.cpu())
         return torch.cat(results).numpy()
 
-# === Feature Extraction ===
 def extract_softmax_features(models: List[EEGPTWrapper], x_data_list: List[np.ndarray], batch_size: int = 64) -> np.ndarray:
     all_probs = [model.predict_proba(x, batch_size=batch_size) for model, x in zip(models, x_data_list)]
     stacked_probs = np.stack(all_probs, axis=1)
     return stacked_probs.reshape(stacked_probs.shape[0], -1)
-
 
 def generate_voting_features(x_train: np.ndarray, x_test: np.ndarray, y_train: np.ndarray, y_test: np.ndarray, ckpt_path: str, channels: List[str]) -> Tuple[np.ndarray, np.ndarray]:
     print("🧠 Extracting IMF-specific softmax features...")
@@ -149,7 +148,19 @@ def generate_voting_features(x_train: np.ndarray, x_test: np.ndarray, y_train: n
 
     return x_train_out, x_test_out
 
-# === BIS Regressor ===
+def run_shap_analysis(model, background_data, sample_data):
+    """
+    Compute and plot SHAP feature importances using DeepExplainer.
+
+    Parameters:
+    - model: trained Keras model
+    - background_data: typically a subset of training data (e.g., x_train[:100])
+    - sample_data: subset of data to explain (e.g., x_test[:100])
+    """
+    explainer = shap.DeepExplainer(model, background_data)
+    shap_values = explainer(sample_data)
+    shap.summary_plot(shap_values, sample_data)
+
 def create_bis_regressor_model(x_train, y_train, x_test, y_test):
 
     input_layer = Input(shape=(x_train.shape[1],))
@@ -157,17 +168,15 @@ def create_bis_regressor_model(x_train, y_train, x_test, y_test):
 
     x = Dense(512, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
     x = BatchNormalization()(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.6)(x)
 
     x = Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
-    #x = attention_block(x)
     x = BatchNormalization()(x)
-    x = Dropout(0.3)(x)
+    x = Dropout(0.7)(x)
 
     x = Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
-    #x = attention_block(x)
     x = BatchNormalization()(x)
-    x = Dropout(0.4)(x)
+    x = Dropout(0.7)(x)
 
     x = Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3))(x)
     x = BatchNormalization()(x)
@@ -201,14 +210,7 @@ def create_bis_regressor_model(x_train, y_train, x_test, y_test):
     model.save("eeg_regressor.keras")
     return model
 
-def attention_block(x):
-    scores = Dense(x.shape[-1])(x)         # Raw weights
-    weights = Softmax()(scores)            # Normalize
-    attended = Multiply()([x, weights])    # Apply attention
-    return attended
 
-
-# === Evaluation ===
 def evaluate_model(model, x_test, y_test):
     if x_test.ndim == 2:
         x_test = np.expand_dims(x_test, axis=-1)
