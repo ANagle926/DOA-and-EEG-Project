@@ -301,17 +301,17 @@ def create_bis_regressor_model(x_train, y_train, x_test, y_test):
     model = Sequential([
         GaussianNoise(0.3, input_shape=(x_train.shape[1],)),
 
-        Dense(512, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
-        BatchNormalization(),
-        Dropout(0.6),
+        #Dense(512, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+        #BatchNormalization(),
+        #Dropout(0.6),
 
-        Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
-        BatchNormalization(),
-        Dropout(0.7),
+        #Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
+        #BatchNormalization(),
+        #Dropout(0.7),
 
         Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
         BatchNormalization(),
-        Dropout(0.7),
+        Dropout(0.5),
 
         Dense(64, activation='relu', kernel_regularizer=keras.regularizers.l2(1e-3)),
         BatchNormalization(),
@@ -349,13 +349,13 @@ def train_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
         # Vary dropout and GaussianNoise upward
         noise_std = np.random.choice([0.3, 0.4, 0.5])
-        dropout_1 = np.random.choice([0.5, 0.6, 0.7])
+        dropout_1 = np.random.choice([0.2, 0.5])
         dropout_2 = np.random.choice([dropout_1, dropout_1+0.1])
         dropout_3 = np.random.choice([dropout_2, dropout_2+0.1])
         dropout_3 = min(dropout_3, 0.8)
 
-        batch_size = np.random.choice([16, 32])
-        lr = np.random.choice([1e-4, 5e-5])
+        batch_size = np.random.choice([32, 64])
+        lr = np.random.choice([1e-4])
 
         model = Sequential([
             GaussianNoise(noise_std, input_shape=(x_train.shape[1],)),
@@ -395,7 +395,7 @@ def train_ensemble(x_train, y_train, x_test, y_test, n_models=5):
             epochs=80,
             batch_size=batch_size,
             callbacks=callbacks,
-            verbose=0
+            verbose=1
         )
 
         model.save(f'ensemble_model_{i}.keras')
@@ -431,7 +431,6 @@ def perform_permutation_importance(x_test, y_test, model):
     x_test_clean = tf.convert_to_tensor(x_test) if isinstance(x_test, np.ndarray) else x_test
     x_test_clean = x_test_clean.numpy() if hasattr(x_test_clean, 'numpy') else x_test_clean
     x_test_clean = np.asarray(x_test_clean).astype(np.float32)
-    print("here")
 
     # 2. Wrap the model
     wrapped_model = KerasRegressorWrapper(model)
@@ -448,7 +447,6 @@ def perform_permutation_importance(x_test, y_test, model):
     )
     print("ran permutation importance")
 
-
     # 4. Generate feature names for display
     num_features = x_test_clean.shape[1]
     feature_names = [f'f{i}' for i in range(num_features)]
@@ -462,8 +460,9 @@ def perform_permutation_importance(x_test, y_test, model):
     }).sort_values(by='importance', ascending=False)
 
     print(importance_df)
-
     plot_feature_importance(importance_df)
+
+    return importance_df
 
 def plot_feature_importance(importance_df, top_n=20):
     top_features = importance_df.head(top_n)[::-1]  # reverse for horizontal bar chart
@@ -477,6 +476,14 @@ def plot_feature_importance(importance_df, top_n=20):
     plt.grid(True)
     plt.show()
 
+def prune_features_and_remap_dataset(x_train, x_test, importance_df, threshold=0.0):
+    importance_df["index"] = importance_df["feature"].str.extract(r"f(\d+)").astype(int)
+    important_features = importance_df[importance_df["importance"] > threshold]["index"].values
+    important_features.sort()
+    x_train_pruned = x_train[:, important_features]
+    x_test_pruned = x_test[:, important_features]
+
+    return x_train_pruned, x_test_pruned, important_features
 
 
 """dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
@@ -506,12 +513,34 @@ x_train = scaler.fit_transform(x_train)
 x_test = scaler.transform(x_test)
 
 #model = create_bis_regressor_model(x_train, y_train, x_test, y_test)
-
-model = load_model("eeg_regressor.keras")
-perform_permutation_importance(x_test[:200], y_test[:200], model)
-
 #evaluate_model(model, x_test, y_test)
-#ensemble_preds, ensemble_mae = train_ensemble(x_train, y_train, x_test, y_test, n_models=8)
+
+#model = load_model("eeg_regressor.keras")
+
+"""importance_df = perform_permutation_importance(x_test[:2000], y_test[:2000], model)
+importance_df.to_csv("feature_importance.csv", index=False)
+
+x_train, x_test, kept_feature_indices = prune_features_and_remap_dataset(
+    x_train,
+    x_test,
+    importance_df,
+    threshold=0.01
+)
+np.save("kept_feature_indices.npy", kept_feature_indices)"""
+
+print(x_test.shape)
+
+kept_feature_indices = np.load("kept_feature_indices.npy")
+x_train = x_train[:, kept_feature_indices]
+x_test = x_test[:, kept_feature_indices]
+
+print(x_test.shape)
+
+
+model = create_bis_regressor_model(x_train, y_train, x_test, y_test)
+evaluate_model(model, x_test, y_test)
+
+ensemble_preds, ensemble_mae = train_ensemble(x_train, y_train, x_test, y_test, n_models=5)
 
 
 
