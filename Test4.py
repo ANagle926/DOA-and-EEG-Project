@@ -4,7 +4,6 @@ from joblib import load
 from keras import Sequential, Model
 from keras.src.saving import load_model, register_keras_serializable
 from sklearn.metrics import mean_absolute_error, r2_score
-import pandas as pd
 import matplotlib.pyplot as plt
 import os
 from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, GlobalAveragePooling1D, MultiHeadAttention
@@ -12,77 +11,7 @@ from keras.src.optimizers import Adam
 from keras.src.callbacks import EarlyStopping, ReduceLROnPlateau
 import keras
 from scipy.signal import periodogram
-from sklearn.inspection import permutation_importance
-import tensorflow as tf
-from tf_keras_vis.saliency import Saliency
-from tf_keras_vis.utils.model_modifiers import ReplaceToLinear
-from tf_keras_vis.utils.scores import CategoricalScore
-
-"""def train_ensemble(x_train, y_train, x_test, y_test, n_models=5):
-    preds = []
-    for i in range(n_models):
-        print(f"\n🔁 Training model {i + 1}/{n_models}")
-
-        # Vary dropout and GaussianNoise upward
-        dropout = np.random.choice([0, 0.1, 0.2])
-        units = np.random.choice([64, 128])
-        batch_size = np.random.choice([32, 64])
-        lr = np.random.choice([1e-4])
-
-        model = Sequential([
-            Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(1024, 3)),
-            Conv1D(128, kernel_size=3, activation='relu'),
-            MaxPooling1D(pool_size=2),
-
-            Bidirectional(LSTM(units * 2, return_sequences=True)),
-            LayerNormalization(),
-            Dropout(dropout),
-            LSTM(units, return_sequences=True),
-
-            TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout),
-            TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout),
-
-            GlobalAveragePooling1D(),
-
-            Dense(256, activation='relu'),
-            LayerNormalization(),
-            Dropout(dropout),
-            Dense(64, activation='relu'),
-            Dense(1)
-        ])
-
-        model.compile(
-            optimizer=Adam(lr),
-            loss=keras.losses.Huber(delta=1.0),
-            metrics=['mae']
-        )
-
-        callbacks = [
-            EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=0),
-            ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-8, verbose=0)
-        ]
-
-        model.fit(
-            x_train, y_train,
-            validation_data=(x_test, y_test),
-            epochs=80,
-            batch_size=batch_size,
-            callbacks=callbacks,
-            verbose=1
-        )
-
-        model.save(f'ensemble_model_{i}.keras')
-        y_pred = model.predict(x_test, verbose=1)
-        preds.append(y_pred)
-        mae = mean_absolute_error(y_test, y_pred)
-        print(f"📌 Model {i + 1} MAE: {mae:.4f}")
-
-
-    ensemble_preds = np.mean(preds, axis=0)
-    ensemble_mae = mean_absolute_error(y_test, ensemble_preds)
-    print(f"\n📊 Ensemble MAE: {ensemble_mae:.4f}")
-    return ensemble_preds, ensemble_mae"""
-
+import joblib
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -101,14 +30,6 @@ class TransformerBlock(keras.layers.Layer):
         self.attn_norm = LayerNormalization()
         self.ffn_norm = LayerNormalization()
         self.dropout = Dropout(dropout_rate)
-
-    def call(self, x, training=False):
-        assert x.ndim == 3, "Expected input shape (batch, seq_len, features)"
-        attn_output = self.attn(x, x, training=training)
-        attn_output = self.attn_norm(x + attn_output)
-        ffn_output = self.ffn(attn_output, training=training)
-        ffn_output = self.ffn_norm(attn_output + ffn_output)
-        return ffn_output
 
     def call(self, x, training=False):
         assert x.ndim == 3, "Expected input shape (batch, seq_len, features)"
@@ -289,15 +210,6 @@ def evaluate_model(model, x_test, y_test):
     print(f"\U0001f4c8 Correlation coefficient: {corr:.4f}")
     print(f"\u2310 R² score: {r2:.4f}")
 
-    plt.figure(figsize=(6, 6))
-    plt.scatter(y_test, pred_test, s=1, alpha=0.5)
-    plt.xlabel('Actual BIS')
-    plt.ylabel('Predicted BIS')
-    plt.title(f'Scatter Plot (Corr: {corr:.4f})')
-    plt.plot([0, max(y_test)], [0, max(y_test)], 'r--')
-    plt.grid(True)
-    plt.show()
-
     errors = y_test - pred_test
     plt.figure(figsize=(8, 4))
     plt.hist(errors, bins=50, edgecolor='black')
@@ -318,8 +230,51 @@ def evaluate_model(model, x_test, y_test):
     plt.grid(True)
     plt.show()
 
-def create_bis_regressor_model(x_train, y_train, x_test, y_test):
-    inputs = Input(shape=(1024, 3))
+def integrated_gradients(model, baseline, input_data, m_steps=50, batch_size=32):
+    """
+    Compute Integrated Gradients using batching across samples, not alphas.
+    """
+    import tensorflow as tf
+
+    baseline = tf.convert_to_tensor(baseline, dtype=tf.float32)
+    input_data = tf.convert_to_tensor(input_data, dtype=tf.float32)
+    n_samples = input_data.shape[0]
+
+    # Create alphas outside the loop
+    alphas = tf.linspace(0.0, 1.0, m_steps + 1)
+
+    all_attributions = []
+
+    for i in range(0, n_samples, batch_size):
+        batch_input = input_data[i:i+batch_size]
+        bsz = batch_input.shape[0]
+        expanded_baseline = tf.repeat(baseline, bsz, axis=0)
+
+        interpolated = tf.stack([
+            expanded_baseline + alpha * (batch_input - expanded_baseline)
+            for alpha in alphas
+        ])  # Shape: (m_steps+1, batch_size, time, channels)
+
+        interpolated = tf.reshape(interpolated, [(m_steps+1)*bsz] + list(batch_input.shape[1:]))
+
+        with tf.GradientTape(watch_accessed_variables=False) as tape:
+            tape.watch(interpolated)
+            predictions = model(interpolated)
+            predictions = tf.reshape(predictions, [m_steps+1, bsz, -1])
+            outputs = predictions[:, :, 0]  # Use first output neuron
+
+        grads = tape.gradient(outputs, interpolated)
+        grads = tf.reshape(grads, [m_steps+1, bsz] + list(batch_input.shape[1:]))
+
+        avg_grads = tf.reduce_mean((grads[:-1] + grads[1:]) / 2.0, axis=0)
+        attributions = (batch_input - baseline) * avg_grads
+
+        all_attributions.append(attributions)
+
+    return tf.concat(all_attributions, axis=0).numpy()
+
+def build_model(x_train, y_train, x_test, y_test):
+    inputs = Input(shape=x_train.shape[1:])
 
     x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
     x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
@@ -357,50 +312,46 @@ def create_bis_regressor_model(x_train, y_train, x_test, y_test):
         x_train, y_train,
         validation_data=(x_test, y_test),
         epochs=80,
-        batch_size=32,
+        batch_size=8, #original= 16
         callbacks=callbacks,
         verbose=1
     )
 
-    model.save("eeg_regressor.keras")
     return model
 
-def train_ensemble(x_train, y_train, x_test, y_test, n_models=5):
+def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
+
     preds = []
+    inputs = Input(shape=x_train.shape[1:])
 
     for i in range(n_models):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
 
-        dropout = np.random.choice([0, 0.1, 0.2])
-        units = np.random.choice([64, 128])
-        batch_size = np.random.choice([32, 64])
-        lr = np.random.choice([1e-4])
+        units = int(np.random.choice([64]))
+        dropout = float(np.random.choice([0.1, 0.2, 0.3]))
+        batch_size = int(np.random.choice([8]))
+        lr = float(np.random.choice([0.0001]))
 
-        inputs = Input(shape=(1024, 3))
-
-        x = Conv1D(64, kernel_size=3, activation='relu')(inputs)
-        x = Conv1D(128, kernel_size=3, activation='relu')(x)
+        x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
+        x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
         x = MaxPooling1D(pool_size=2)(x)
 
-        x = Bidirectional(LSTM(units * 2, return_sequences=True))(x)
+        x = Bidirectional(LSTM(units*2, return_sequences=True))(x)
         x = LayerNormalization()(x)
-        if dropout > 0:
-            x = Dropout(dropout)(x)
-
         x = LSTM(units, return_sequences=True)(x)
 
         x = TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout)(x)
         x = TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout)(x)
 
         x = GlobalAveragePooling1D()(x)
+
         x = Dense(256, activation='relu')(x)
         x = LayerNormalization()(x)
-        if dropout > 0:
-            x = Dropout(dropout)(x)
+        x = Dropout(dropout)(x)
         x = Dense(64, activation='relu')(x)
         outputs = Dense(1)(x)
 
-        model = Model(inputs=inputs, outputs=outputs)
+        model = Model(inputs=inputs, outputs=outputs, name="functional_bis_model")
 
         model.compile(
             optimizer=Adam(lr),
@@ -409,15 +360,15 @@ def train_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         )
 
         callbacks = [
-            EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=0),
-            ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-8, verbose=0)
+            EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=1),
+            ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-8, verbose=1)
         ]
 
         model.fit(
             x_train, y_train,
             validation_data=(x_test, y_test),
             epochs=80,
-            batch_size=batch_size,
+            batch_size=32,
             callbacks=callbacks,
             verbose=1
         )
@@ -426,111 +377,131 @@ def train_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         y_pred = model.predict(x_test, verbose=1)
         preds.append(y_pred)
         mae = mean_absolute_error(y_test, y_pred)
+
+        print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
         print(f"📌 Model {i + 1} MAE: {mae:.4f}")
 
-    ensemble_preds = np.mean(preds, axis=0)
+    ensemble_preds = np.mean(preds, axis=0).flatten()
+    y_test = y_test.flatten()
     ensemble_mae = mean_absolute_error(y_test, ensemble_preds)
+    ensemble_r2 = r2_score(y_test, ensemble_preds)
+    ensemble_corr = np.corrcoef(y_test, ensemble_preds)[0, 1]
+
     print(f"\n📊 Ensemble MAE: {ensemble_mae:.4f}")
-    return ensemble_preds, ensemble_mae
+    print(f"📈 Correlation coefficient: {ensemble_corr:.4f}")
+    print(f"📐 R² score: {ensemble_r2:.4f}")
 
-def perform_permutation_importance(x_test, y_test, model):
+    return ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr
 
-    x_test_flat = x_test[:2000].reshape(x_test.shape[0], -1)
+def optimized_integrated_gradients(model, baseline, input_data, m_steps=50, sample_batch_size=8):
+    """
+    Safer version of Integrated Gradients: loops over samples in small batches,
+    and interpolates per-sample to reduce memory footprint.
+    """
+    import tensorflow as tf
 
-    x_test_clean = np.asarray(x_test_flat).astype(np.float32)
-    #x_test_clean = tf.convert_to_tensor(x_test) if isinstance(x_test, np.ndarray) else x_test
-    #x_test_clean = x_test_clean.numpy() if hasattr(x_test_clean, 'numpy') else x_test_clean
-    x_test_clean = np.asarray(x_test_clean).astype(np.float32)
+    baseline = tf.convert_to_tensor(baseline, dtype=tf.float32)
+    input_data = tf.convert_to_tensor(input_data, dtype=tf.float32)
 
-    # 2. Wrap the model
-    wrapped_model = KerasRegressorWrapper(model)
-    print("created model")
+    n_samples = input_data.shape[0]
+    alphas = tf.linspace(0.0, 1.0, m_steps + 1)
 
-    # 3. Run permutation importance
-    result = permutation_importance(
-        wrapped_model,
-        x_test_clean,  # ✅ use cleaned input here
-        y_test,
-        n_repeats=10,
-        random_state=42,
-        scoring='neg_mean_absolute_error'
+    all_attributions = []
+
+    for i in range(0, n_samples, sample_batch_size):
+        batch = input_data[i:i+sample_batch_size]
+        batch_attributions = []
+
+        for j in range(batch.shape[0]):
+            x = batch[j:j+1]
+            baseline_repeated = tf.repeat(baseline, repeats=m_steps + 1, axis=0)
+            x_repeated = tf.repeat(x, repeats=m_steps + 1, axis=0)
+
+            interpolated = baseline_repeated + tf.reshape(alphas, (-1, 1, 1)) * (x_repeated - baseline_repeated)
+
+            with tf.GradientTape(watch_accessed_variables=False) as tape:
+                tape.watch(interpolated)
+                predictions = model(interpolated)
+                outputs = predictions[:, 0]
+
+            grads = tape.gradient(outputs, interpolated)
+            grads = tf.reshape(grads, [m_steps + 1] + list(x.shape[1:]))
+            avg_grads = tf.reduce_mean((grads[:-1] + grads[1:]) / 2.0, axis=0)
+
+            attr = (x - baseline) * avg_grads
+            batch_attributions.append(attr)
+
+        all_attributions.append(tf.concat(batch_attributions, axis=0))
+
+    return tf.concat(all_attributions, axis=0).numpy()
+
+def perform_integrated_gradients_feature_importance(model, x_data, channel_threshold=0.1, timestep_percentile=50):
+    # Baseline: Zero-valued EEG signals
+    baseline = np.zeros((1, 1024, 3))
+
+    # Compute saliency maps using your integrated_gradients function
+    """saliency_maps = integrated_gradients(
+        model=model,
+        baseline=baseline,
+        input_data=x_data[:200]  # Use x_data instead of x_train
+    )"""
+    saliency_maps = optimized_integrated_gradients(
+        model=model,
+        baseline=baseline,
+        input_data=x_data,
+        m_steps=50,
+        sample_batch_size=16
     )
-    print("ran permutation importance")
 
-    # 4. Generate feature names for display
-    num_features = x_test_clean.shape[1]
-    feature_names = [f'f{i}' for i in range(num_features)]
-    print("generated feature names")
+    visualize_saliency(saliency_maps=saliency_maps)
 
-    # 5. Display importance dataframe
-    importance_df = pd.DataFrame({
-        'feature': feature_names,
-        'importance': result.importances_mean,
-        'std': result.importances_std
-    }).sort_values(by='importance', ascending=False)
+    # 1. Channel (IMF) selection
+    channel_importance = np.sum(np.abs(saliency_maps), axis=(0,1))
+    total_importance = np.sum(channel_importance)
+    important_channels = np.where(channel_importance/total_importance >= channel_threshold)[0]
 
-    print(importance_df)
-    plot_feature_importance(importance_df)
+    if len(important_channels) == 0:
+        important_channels = np.array([np.argmax(channel_importance)])
 
-    return importance_df
+    # 2. Temporal pruning within channels
+    timestep_masks = {}
+    for ch in important_channels:
+        # Average importance across samples for this channel
+        timestep_importance = np.mean(np.abs(saliency_maps[:,:,ch]), axis=0)
 
-def plot_feature_importance(importance_df, top_n=20):
-    top_features = importance_df.head(top_n)[::-1]  # reverse for horizontal bar chart
+        # Dynamic threshold based on percentile
+        threshold = np.percentile(timestep_importance, timestep_percentile)
+        timestep_masks[ch] = timestep_importance >= threshold
 
-    plt.figure(figsize=(10, 6))
-    plt.barh(top_features['feature'], top_features['importance'], xerr=top_features['std'])
-    plt.xlabel('Feature Importance')
-    plt.ylabel('Feature')
-    plt.title(f'Top {top_n} Important Features')
+    return important_channels, timestep_masks
+
+def apply_feature_pruning(x_data, important_channels, timestep_masks):
+    """Prunes both channels and timesteps within channels"""
+    # 1. Select important channels
+    x_pruned = x_data[:, :, important_channels]
+
+    # 2. Apply temporal masks to each selected channel
+    for i, orig_ch in enumerate(important_channels):
+        mask = timestep_masks[orig_ch]
+        # Zero out unimportant timesteps in this channel
+        x_pruned[:, ~mask, i] = 0.0  # Replace with baseline if needed
+
+    return x_pruned
+
+def visualize_saliency(saliency_maps):
+    # Temporal importance visualization
+    plt.figure(figsize=(12, 6))
+
+    # First sample, first 3 channels
+    for i in range(3):
+        plt.subplot(3, 1, i+1)
+        plt.plot(saliency_maps[0,:,i])
+        plt.title(f"Temporal Importance - Channel {i}")
+        plt.xlabel("Timesteps")
+        plt.ylabel("Importance")
+
     plt.tight_layout()
-    plt.grid(True)
     plt.show()
-
-def prune_features_and_remap_dataset(x_train, x_test, importance_df, threshold=0.0):
-    importance_df["index"] = importance_df["feature"].str.extract(r"f(\d+)").astype(int)
-    important_features = importance_df[importance_df["importance"] > threshold]["index"].values
-    important_features.sort()
-    x_train_pruned = x_train[:, important_features]
-    x_test_pruned = x_test[:, important_features]
-
-    return x_train_pruned, x_test_pruned, important_features
-
-def perform_integrated_gradients_feature_importance(model, x_data):
-    def score_function(output):
-        return output[:, 0]  # Directly return regression outputs
-
-
-    modifier = ReplaceToLinear()
-    saliency = Saliency(model, model_modifier=modifier, clone=True)
-
-    # === Batched Saliency Computation ===
-    batch_size = 16  # adjust if OOM persists
-    saliency_maps = []
-
-    for i in range(0, x_data.shape[0], batch_size):
-        batch = x_data[i:i + batch_size]
-        saliency_batch = saliency(score_function, batch)
-        saliency_maps.append(saliency_batch)
-
-    saliency_map = np.concatenate(saliency_maps, axis=0)
-    # === End Batch Processing ===
-
-    saliency_map = tf.convert_to_tensor(saliency_map)
-    if tf.executing_eagerly():
-        saliency_map = saliency_map.numpy()
-    else:
-        saliency_map = tf.compat.v1.Session().run(saliency_map)
-
-    saliency_flat = saliency_map.reshape(saliency_map.shape[0], -1)
-    feature_importance = np.mean(np.abs(saliency_flat), axis=0)
-
-    importance_df = pd.DataFrame({
-        'feature': [f'f{i}' for i in range(len(feature_importance))],
-        'importance': feature_importance
-    }).sort_values(by='importance', ascending=False)
-    plot_feature_importance(importance_df)
-
-    return importance_df
 
 
 dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
@@ -540,28 +511,78 @@ x_test, y_test = dataset.x_test, dataset.y_test
 c_test= dataset.c_test
 c_train= dataset.c_train
 
-#analyze_dataset(x_train, y_train, x_test, y_test)
+""""#analyze_dataset(x_train, y_train, x_test, y_test)
 
 print("x_train_raw shape:", x_train.shape)
 print("x_test_raw shape:", x_test.shape)
 
-#model = create_bis_regressor_model(x_train, y_train, x_test, y_test)
-model=load_model("eeg_regressor.keras")
+model = build_model(x_train, y_train, x_test, y_test)
+model.save("eeg_regressor_v3.keras")
+
+#model=load_model("eeg_regressor_v2.keras")
 evaluate_model(model, x_test, y_test)
+#5.51
+#5.0448
+#📊 Test MAE: 4.9507
 
-importance_df = perform_integrated_gradients_feature_importance(model, x_test[:2000])
-importance_df.to_csv("feature_importance.csv", index=False)
-
-x_train, x_test, kept_feature_indices = prune_features_and_remap_dataset(
-    x_train,
-    x_test,
-    importance_df,
-    threshold=0.01
+# Compute important features ONCE using training data
+important_channels, timestep_masks = perform_integrated_gradients_feature_importance(
+    model, x_train[:2000],
+    channel_threshold=0.15,
+    timestep_percentile=60
 )
 
-np.save("kept_feature_indices.npy", kept_feature_indices)
+joblib.dump((important_channels, timestep_masks), "pruning_artifacts_v3.joblib")
+print("✅ Saved pruning artifacts to pruning_artifacts_v3.joblib")
 
-model = create_bis_regressor_model(x_train, y_train, x_test, y_test)
-evaluate_model(model, x_test, y_test)
-ensemble_preds, ensemble_mae = train_ensemble(x_train, y_train, x_test, y_test, n_models=5)
+# Prune both datasets using same features (prevents data leakage)
+x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
+x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 
+assert x_train_pruned.shape[2] == len(important_channels), \
+    "Channel count mismatch after pruning"
+assert x_test_pruned.shape[1:] == x_train_pruned.shape[1:], \
+    "Train/test shape mismatch"
+
+model = build_model(x_train_pruned, y_train, x_test_pruned, y_test)
+model.save("eeg_regressor_pruned_v3.keras")"""
+
+important_channels, timestep_masks = joblib.load("pruning_artifacts_v3.joblib")
+x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
+x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
+
+model= load_model("eeg_regressor_pruned_v3.keras")
+
+evaluate_model(model, x_test_pruned, y_test)
+#5.14
+#4.6918
+#📊 Test MAE: 4.7140
+
+ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=5)
+#4.69
+#4.46
+#📊 Ensemble MAE: 4.5804
+
+errors = y_test - ensemble_preds
+
+# Histogram of prediction errors
+plt.figure(figsize=(8, 4))
+plt.hist(errors, bins=50, edgecolor='black')
+plt.xlabel('Prediction Error')
+plt.ylabel('Count')
+plt.title('Histogram of Ensemble Prediction Errors')
+plt.grid(True)
+plt.show()
+
+# Colored scatter plot of actual vs predicted
+abs_errors = np.abs(errors)
+
+plt.figure(figsize=(6, 6))
+sc = plt.scatter(y_test, ensemble_preds, c=abs_errors, s=2, cmap='viridis', alpha=0.6)
+plt.xlabel('Actual BIS')
+plt.ylabel('Predicted BIS')
+plt.title('Ensemble Prediction Scatter (Colored by Absolute Error)')
+plt.colorbar(sc, label='Absolute Error')
+plt.plot([0, max(y_test)], [0, max(y_test)], 'r--')
+plt.grid(True)
+plt.show()
