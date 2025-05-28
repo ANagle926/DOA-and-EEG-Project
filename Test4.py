@@ -319,9 +319,31 @@ def build_model(x_train, y_train, x_test, y_test):
 
     return model
 
+def weighted_topk_ensemble(preds, val_maes, k=3):
+    val_maes = np.array(val_maes)
+    preds = np.array(preds)  # shape: (n_models, n_samples)
+
+    # Step 1: Get indices of top-k models (lowest MAEs)
+    topk_idx = np.argsort(val_maes)[:k]
+
+    # Step 2: Extract top-k MAEs and predictions
+    topk_maes = val_maes[topk_idx]
+    topk_preds = preds[topk_idx]  # shape: (k, n_samples)
+
+    # Step 3: Inverse MAE weighting
+    weights = 1 / (topk_maes + 1e-8)
+    weights /= weights.sum()  # Normalize
+
+    # Step 4: Weighted average of top-k predictions
+    ensemble_preds = np.average(topk_preds, axis=0, weights=weights)
+
+    return ensemble_preds, topk_idx, weights
+
 def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
     preds = []
+    val_maes =[]
+
     inputs = Input(shape=x_train.shape[1:])
 
     for i in range(n_models):
@@ -329,8 +351,8 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
         units = int(np.random.choice([64]))
         dropout = float(np.random.choice([0.1, 0.2, 0.3]))
-        batch_size = int(np.random.choice([8]))
-        lr = float(np.random.choice([0.0001]))
+        batch_size = int(np.random.choice([8, 16]))
+        lr = float(np.random.choice([0.0001, 0.0005]))
 
         x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
         x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
@@ -377,19 +399,28 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         y_pred = model.predict(x_test, verbose=1)
         preds.append(y_pred)
         mae = mean_absolute_error(y_test, y_pred)
+        val_maes.append(mae)
 
         print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
         print(f"📌 Model {i + 1} MAE: {mae:.4f}")
 
-    ensemble_preds = np.mean(preds, axis=0).flatten()
+    ensemble_preds, topk_idx, weights = weighted_topk_ensemble(preds, val_maes, k=3)
+
+    # Flatten for metric calculation
+    ensemble_preds = ensemble_preds.flatten()
     y_test = y_test.flatten()
+
+    # Compute performance metrics
     ensemble_mae = mean_absolute_error(y_test, ensemble_preds)
     ensemble_r2 = r2_score(y_test, ensemble_preds)
     ensemble_corr = np.corrcoef(y_test, ensemble_preds)[0, 1]
 
-    print(f"\n📊 Ensemble MAE: {ensemble_mae:.4f}")
+    # Display results
+    print(f"\n📊 Top-{len(topk_idx)} Weighted Ensemble MAE: {ensemble_mae:.4f}")
     print(f"📈 Correlation coefficient: {ensemble_corr:.4f}")
     print(f"📐 R² score: {ensemble_r2:.4f}")
+    print(f"🏆 Used model indices: {topk_idx}")
+    print(f"📊 Normalized weights: {weights}")
 
     return ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr
 
@@ -558,7 +589,7 @@ evaluate_model(model, x_test_pruned, y_test)
 #4.6918
 #📊 Test MAE: 4.7140
 
-ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=5)
+ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=7)
 #4.69
 #4.46
 #📊 Ensemble MAE: 4.5804
