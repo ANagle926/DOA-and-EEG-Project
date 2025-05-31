@@ -6,7 +6,8 @@ from keras.src.saving import load_model, register_keras_serializable
 from sklearn.metrics import mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 import os
-from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, GlobalAveragePooling1D, MultiHeadAttention
+from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, \
+    GlobalAveragePooling1D, MultiHeadAttention, BatchNormalization, GaussianNoise
 from keras.src.optimizers import Adam
 from keras.src.callbacks import EarlyStopping, ReduceLROnPlateau
 import keras
@@ -19,6 +20,30 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 @register_keras_serializable()
 class TransformerBlock(keras.layers.Layer):
+    def __init__(self, num_heads, key_dim, ff_units, dropout_rate, **kwargs):
+        super().__init__(**kwargs)
+        self.attn = MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)
+        self.ff_units = ff_units
+        self.dropout_rate = dropout_rate
+        self.attn_norm = LayerNormalization()
+        self.ffn_norm = LayerNormalization()
+
+    def build(self, input_shape):
+        embed_dim = input_shape[-1]
+        self.ffn = Sequential([
+            Dense(self.ff_units, activation='relu'),
+            Dropout(self.dropout_rate),
+            Dense(embed_dim)  # ensure match for residual
+        ])
+        super().build(input_shape)
+
+    def call(self, x, training=False):
+        attn_output = self.attn(x, x, training=training)
+        attn_output = self.attn_norm(x + attn_output)
+        ffn_output = self.ffn(attn_output, training=training)
+        return self.ffn_norm(attn_output + ffn_output)
+
+"""class TransformerBlock(keras.layers.Layer):
     def __init__(self, num_heads, key_dim, ff_units, dropout_rate, **kwargs):
         super(TransformerBlock, self).__init__(**kwargs)  # Pass kwargs to parent constructor
         self.attn = MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)
@@ -37,7 +62,7 @@ class TransformerBlock(keras.layers.Layer):
         attn_output = self.attn_norm(x + attn_output)
         ffn_output = self.ffn(attn_output, training=training)
         ffn_output = self.ffn_norm(attn_output + ffn_output)
-        return ffn_output
+        return ffn_output"""
 
 class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
     def __init__(self, model):
@@ -349,17 +374,22 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
     for i in range(n_models):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
 
-        units = int(np.random.choice([64]))
-        dropout = float(np.random.choice([0.1, 0.2, 0.3]))
-        batch_size = int(np.random.choice([8, 16]))
-        lr = float(np.random.choice([0.0001, 0.0005]))
+        units = int(np.random.choice([64, 128]))
+        dropout = float(np.random.choice([0, 0.2]))
+        batch_size = int(np.random.choice([32]))
+        lr = float(np.random.choice([0.00005, 0.0001]))
 
+        #x = GaussianNoise(0.05)(inputs)
         x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
         x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
+        x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
+
         x = MaxPooling1D(pool_size=2)(x)
 
         x = Bidirectional(LSTM(units*2, return_sequences=True))(x)
-        x = LayerNormalization()(x)
+        x = TransformerBlock(num_heads=4, key_dim=units*2, ff_units=256, dropout_rate=dropout)(x)
+
+        #x = LayerNormalization()(x)
         x = LSTM(units, return_sequences=True)(x)
 
         x = TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout)(x)
@@ -390,7 +420,7 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
             x_train, y_train,
             validation_data=(x_test, y_test),
             epochs=80,
-            batch_size=32,
+            batch_size=batch_size,
             callbacks=callbacks,
             verbose=1
         )
@@ -578,21 +608,23 @@ assert x_test_pruned.shape[1:] == x_train_pruned.shape[1:], \
 model = build_model(x_train_pruned, y_train, x_test_pruned, y_test)
 model.save("eeg_regressor_pruned_v3.keras")"""
 
-important_channels, timestep_masks = joblib.load("pruning_artifacts_v3.joblib")
+important_channels, timestep_masks = joblib.load("pruning_artifacts_v2.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 
-model= load_model("eeg_regressor_pruned_v3.keras")
-
-evaluate_model(model, x_test_pruned, y_test)
+#model= load_model("eeg_regressor_pruned_v2.keras")
+#model.summary()
+#evaluate_model(model, x_test_pruned, y_test)
 #5.14
 #4.6918
 #📊 Test MAE: 4.7140
 
-ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=7)
+ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=6)
 #4.69
 #4.46
 #📊 Ensemble MAE: 4.5804
+#📊 Top-3 Weighted Ensemble MAE: 4.5256
+# 📊 Top-3 Weighted Ensemble MAE: 4.4184
 
 errors = y_test - ensemble_preds
 
