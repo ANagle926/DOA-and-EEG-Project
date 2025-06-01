@@ -12,11 +12,27 @@ from keras.src.optimizers import Adam
 from keras.src.callbacks import EarlyStopping, ReduceLROnPlateau
 import keras
 from scipy.signal import periodogram
+from keras.src.optimizers.schedules import CosineDecayRestarts
+import tensorflow as tf
+from keras import layers
 import joblib
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 from sklearn.base import BaseEstimator, RegressorMixin
+
+class PositionalEmbedding(layers.Layer):
+    def __init__(self, sequence_length, d_model):
+        super().__init__()
+        self.token_embeddings = layers.Dense(d_model)
+        self.position_embeddings = layers.Embedding(input_dim=sequence_length, output_dim=d_model)
+
+    def call(self, x):
+        length = tf.shape(x)[1]
+        positions = tf.range(start=0, limit=length, delta=1)
+        pos_encoding = self.position_embeddings(positions)
+        return x + pos_encoding
+
 
 @register_keras_serializable()
 class TransformerBlock(keras.layers.Layer):
@@ -374,46 +390,61 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
     for i in range(n_models):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
 
-        units = int(np.random.choice([64, 128]))
-        dropout = float(np.random.choice([0, 0.2]))
-        batch_size = int(np.random.choice([32]))
-        lr = float(np.random.choice([0.00005, 0.0001]))
+        units = int(np.random.choice([128]))
+        dropout = float(np.random.choice([0, ]))
+        batch_size = int(np.random.choice([32, 100]))
+        lr = float(np.random.choice([0.0001]))
 
-        #x = GaussianNoise(0.05)(inputs)
         x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
+        x = Conv1D(filters=64, kernel_size=3, activation='relu')(x)
+
+        x = MaxPooling1D(pool_size=2)(x)
         x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
+        x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
+
+        x = MaxPooling1D(pool_size=2)(x)
+        x = PositionalEmbedding(sequence_length=500, d_model=128)(x)
+        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
+
+        x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
         x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
 
         x = MaxPooling1D(pool_size=2)(x)
 
         x = Bidirectional(LSTM(units*2, return_sequences=True))(x)
-        x = TransformerBlock(num_heads=4, key_dim=units*2, ff_units=256, dropout_rate=dropout)(x)
-
-        #x = LayerNormalization()(x)
-        x = LSTM(units, return_sequences=True)(x)
-
-        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout)(x)
-        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout)(x)
+        x = TransformerBlock(num_heads=4, key_dim=units*2, ff_units=512, dropout_rate=dropout)(x)
 
         x = GlobalAveragePooling1D()(x)
 
         x = Dense(256, activation='relu')(x)
-        x = LayerNormalization()(x)
-        x = Dropout(dropout)(x)
+        x = Dense(128, activation='relu')(x)
         x = Dense(64, activation='relu')(x)
         outputs = Dense(1)(x)
 
         model = Model(inputs=inputs, outputs=outputs, name="functional_bis_model")
 
+        initial_learning_rate = lr
+        first_decay_steps = 5  # number of steps (or epochs) before first decay
+        t_mul = 2.0              # how fast decay cycles grow
+        m_mul = 0.9              # scale of restart learning rate
+
+        lr_schedule = CosineDecayRestarts(
+            initial_learning_rate=initial_learning_rate,
+            first_decay_steps=first_decay_steps,
+            t_mul=t_mul,
+            m_mul=m_mul,
+            alpha=1e-6  # minimum learning rate
+        )
+
         model.compile(
-            optimizer=Adam(lr),
+            optimizer=Adam(learning_rate=lr_schedule),
             loss=keras.losses.Huber(delta=1.0),
             metrics=['mae']
         )
 
         callbacks = [
-            EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=1),
-            ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-8, verbose=1)
+            EarlyStopping(monitor='val_mae', patience=6, restore_best_weights=True, verbose=1),
+            #ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=3, min_lr=1e-8, verbose=1)
         ]
 
         model.fit(
@@ -619,12 +650,13 @@ x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks
 #4.6918
 #📊 Test MAE: 4.7140
 
-ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=6)
+ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=10)
 #4.69
 #4.46
 #📊 Ensemble MAE: 4.5804
 #📊 Top-3 Weighted Ensemble MAE: 4.5256
 # 📊 Top-3 Weighted Ensemble MAE: 4.4184
+#📊 Top-3 Weighted Ensemble MAE: 4.5213
 
 errors = y_test - ensemble_preds
 
