@@ -22,16 +22,42 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 from sklearn.base import BaseEstimator, RegressorMixin
 
 class PositionalEmbedding(layers.Layer):
-    def __init__(self, sequence_length, d_model):
+    def __init__(self, sequence_length):
         super().__init__()
-        self.token_embeddings = layers.Dense(d_model)
-        self.position_embeddings = layers.Embedding(input_dim=sequence_length, output_dim=d_model)
+        self.sequence_length = sequence_length
+        self.position_embeddings = None
+        self.token_proj = None
+
+    def build(self, input_shape):
+        d_model = input_shape[-1]
+        self.token_proj = layers.Dense(d_model)
+        self.position_embeddings = layers.Embedding(input_dim=self.sequence_length, output_dim=d_model)
 
     def call(self, x):
         length = tf.shape(x)[1]
         positions = tf.range(start=0, limit=length, delta=1)
         pos_encoding = self.position_embeddings(positions)
         return x + pos_encoding
+
+
+class AttentionPooling1D(layers.Layer):
+    def __init__(self):
+        super().__init__()
+
+    def build(self, input_shape):
+        self.attention_weights = self.add_weight(
+            name="attention_weights",
+            shape=(input_shape[-1], 1),
+            initializer="glorot_uniform",
+            trainable=True,
+        )
+
+    def call(self, inputs):
+        # inputs: (batch, time, features)
+        scores = tf.matmul(inputs, self.attention_weights)  # (batch, time, 1)
+        scores = tf.nn.softmax(scores, axis=1)              # normalize scores
+        output = tf.reduce_sum(inputs * scores, axis=1)     # weighted sum
+        return output
 
 
 @register_keras_serializable()
@@ -390,29 +416,29 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
     for i in range(n_models):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
 
-        units = int(np.random.choice([128]))
-        dropout = float(np.random.choice([0, ]))
-        batch_size = int(np.random.choice([32, 100]))
+        units = int(np.random.choice([64, 128]))
+        dropout = float(np.random.choice([0]))
+        batch_size = int(np.random.choice([16, 64]))
         lr = float(np.random.choice([0.0001]))
+        print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
 
-        x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
-        x = Conv1D(filters=64, kernel_size=3, activation='relu')(x)
-
-        x = MaxPooling1D(pool_size=2)(x)
-        x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
-        x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
-
-        x = MaxPooling1D(pool_size=2)(x)
-        x = PositionalEmbedding(sequence_length=500, d_model=128)(x)
-        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
-
-        x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
-        x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
-
+        x = Conv1D(64, kernel_size=5, activation='relu', padding='same')(inputs)
+        x = Conv1D(64, kernel_size=5, activation='relu', padding='same')(x)
         x = MaxPooling1D(pool_size=2)(x)
 
-        x = Bidirectional(LSTM(units*2, return_sequences=True))(x)
-        x = TransformerBlock(num_heads=4, key_dim=units*2, ff_units=512, dropout_rate=dropout)(x)
+        x = Conv1D(128, kernel_size=3, activation='relu', padding='same')(x)
+        x = Conv1D(128, kernel_size=3, activation='relu', padding='same')(x)
+        x = MaxPooling1D(pool_size=2)(x)
+
+        x = Conv1D(256, kernel_size=3, activation='relu', padding='same')(x)
+        x = Conv1D(256, kernel_size=3, activation='relu', padding='same')(x)
+        x = MaxPooling1D(pool_size=2)(x)
+
+        x = PositionalEmbedding(sequence_length=x.shape[1])(x)
+        x = TransformerBlock(num_heads=4, key_dim=64, ff_units=256, dropout_rate=dropout)(x)
+
+        x = Bidirectional(LSTM(units, return_sequences=True))(x)
+        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=512, dropout_rate=dropout)(x)
 
         x = GlobalAveragePooling1D()(x)
 
@@ -443,7 +469,7 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         )
 
         callbacks = [
-            EarlyStopping(monitor='val_mae', patience=6, restore_best_weights=True, verbose=1),
+            EarlyStopping(monitor='val_mae', patience=7, restore_best_weights=True, verbose=1),
             #ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=3, min_lr=1e-8, verbose=1)
         ]
 
@@ -462,7 +488,6 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         mae = mean_absolute_error(y_test, y_pred)
         val_maes.append(mae)
 
-        print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
         print(f"📌 Model {i + 1} MAE: {mae:.4f}")
 
     ensemble_preds, topk_idx, weights = weighted_topk_ensemble(preds, val_maes, k=3)
@@ -642,6 +667,7 @@ model.save("eeg_regressor_pruned_v3.keras")"""
 important_channels, timestep_masks = joblib.load("pruning_artifacts_v2.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
+print(x_train_pruned.shape)
 
 #model= load_model("eeg_regressor_pruned_v2.keras")
 #model.summary()
@@ -650,13 +676,16 @@ x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks
 #4.6918
 #📊 Test MAE: 4.7140
 
-ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=10)
+ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=5)
 #4.69
 #4.46
 #📊 Ensemble MAE: 4.5804
 #📊 Top-3 Weighted Ensemble MAE: 4.5256
 # 📊 Top-3 Weighted Ensemble MAE: 4.4184
 #📊 Top-3 Weighted Ensemble MAE: 4.5213
+#📊 Top-3 Weighted Ensemble MAE: 4.4883
+#📊 Top-3 Weighted Ensemble MAE: 4.5753
+
 
 errors = y_test - ensemble_preds
 
