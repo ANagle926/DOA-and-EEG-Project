@@ -7,7 +7,7 @@ from sklearn.metrics import mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 import os
 from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, \
-    GlobalAveragePooling1D, MultiHeadAttention, BatchNormalization, GaussianNoise
+    GlobalAveragePooling1D, MultiHeadAttention, BatchNormalization, GaussianNoise, Concatenate, Add, Activation
 from keras.src.optimizers import Adam
 from keras.src.callbacks import EarlyStopping, ReduceLROnPlateau
 import keras
@@ -38,7 +38,6 @@ class PositionalEmbedding(layers.Layer):
         positions = tf.range(start=0, limit=length, delta=1)
         pos_encoding = self.position_embeddings(positions)
         return x + pos_encoding
-
 
 class AttentionPooling1D(layers.Layer):
     def __init__(self):
@@ -406,6 +405,54 @@ def weighted_topk_ensemble(preds, val_maes, k=3):
 
     return ensemble_preds, topk_idx, weights
 
+def multi_scale_conv_block(x, filters):
+    conv3 = Conv1D(filters, kernel_size=3, padding='same', activation='relu')(x)
+    conv5 = Conv1D(filters, kernel_size=5, padding='same', activation='relu')(x)
+    conv7 = Conv1D(filters, kernel_size=7, padding='same', activation='relu')(x)
+    concat = Concatenate()([conv3, conv5, conv7])
+    out = Conv1D(filters, kernel_size=1, padding='same', activation='relu')(concat)
+    return out
+
+def residual_block(x, filters):
+    shortcut = x
+    x = Conv1D(filters, kernel_size=3, padding='same', activation='relu')(x)
+    x = Conv1D(filters, kernel_size=3, padding='same')(x)
+    x = Add()([shortcut, x])
+    x = Activation('relu')(x)
+    return x
+
+from sklearn.linear_model import RidgeCV
+from sklearn.ensemble import GradientBoostingRegressor
+
+def meta_ensemble(preds, y_true, method="ridge"):
+    """
+    Train a second-level model (meta-learner) on base model predictions.
+
+    Parameters:
+        preds: list of np.arrays of shape (n_samples, 1)
+        y_true: true targets, shape (n_samples,)
+        method: "ridge" or "gbrt"
+
+    Returns:
+        final_predictions: predictions from meta-model
+        model: trained meta-model
+    """
+
+    # Stack predictions from base models (shape: [n_models, n_samples, 1]) -> (n_samples, n_models)
+    P = np.hstack(preds)
+
+    if method == "ridge":
+        model = RidgeCV(alphas=np.logspace(-3, 3, 10), cv=5)
+    elif method == "gbrt":
+        model = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1)
+    else:
+        raise ValueError("Unknown method")
+
+    model.fit(P, y_true)
+    final_predictions = model.predict(P)
+    return final_predictions, model
+
+
 def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
     preds = []
@@ -416,29 +463,69 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
     for i in range(n_models):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
 
-        units = int(np.random.choice([64, 128]))
-        dropout = float(np.random.choice([0]))
-        batch_size = int(np.random.choice([16, 64]))
-        lr = float(np.random.choice([0.0001]))
+        """units = int(np.random.choice([64]))
+        dropout = float(np.random.choice([0, 0.3]))
+        batch_size = int(np.random.choice([16, 32]))
+        lr = float(np.random.choice([0.001, 0.0001]))
+
         print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
 
-        x = Conv1D(64, kernel_size=5, activation='relu', padding='same')(inputs)
-        x = Conv1D(64, kernel_size=5, activation='relu', padding='same')(x)
-        x = MaxPooling1D(pool_size=2)(x)
+        x = multi_scale_conv_block(inputs, 64)
+        x = residual_block(x, 64)
 
-        x = Conv1D(128, kernel_size=3, activation='relu', padding='same')(x)
-        x = Conv1D(128, kernel_size=3, activation='relu', padding='same')(x)
-        x = MaxPooling1D(pool_size=2)(x)
+        x = multi_scale_conv_block(x, 128)
+        x = residual_block(x, 128)
 
-        x = Conv1D(256, kernel_size=3, activation='relu', padding='same')(x)
-        x = Conv1D(256, kernel_size=3, activation='relu', padding='same')(x)
-        x = MaxPooling1D(pool_size=2)(x)
+        x = multi_scale_conv_block(x, 256)
+        x = residual_block(x, 256)
 
         x = PositionalEmbedding(sequence_length=x.shape[1])(x)
-        x = TransformerBlock(num_heads=4, key_dim=64, ff_units=256, dropout_rate=dropout)(x)
+        x = TransformerBlock(num_heads=4, key_dim=128, ff_units=128, dropout_rate=dropout)(x)
+
+        #x = Dense(128, activation='relu')(x)
+        #x = Dense(64, activation='relu')(x)
 
         x = Bidirectional(LSTM(units, return_sequences=True))(x)
-        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=512, dropout_rate=dropout)(x)
+        x = TransformerBlock(num_heads=8, key_dim=256, ff_units=128, dropout_rate=dropout)(x)
+        #x = TransformerBlock(num_heads=4, key_dim=128, ff_units=256, dropout_rate=dropout)(x)
+        x=LayerNormalization()(x)
+
+        #x = GlobalAveragePooling1D()(x)
+        x= AttentionPooling1D()(x)
+
+        x = Dense(512, activation='relu')(x)
+        x = Dense(256, activation='relu')(x)
+        x= Dropout(dropout)(x)
+        x = Dense(128, activation='relu')(x)
+        x= Dropout(dropout)(x)
+        x = Dense(64, activation='relu')(x)
+        outputs = Dense(1)(x)"""
+        units = int(np.random.choice([128]))
+        dropout = float(np.random.choice([0, 0.2]))
+        batch_size = int(np.random.choice([32, 100]))
+        lr = float(np.random.choice([0.0001]))
+
+        print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
+
+
+        x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
+        x = Conv1D(filters=64, kernel_size=3, activation='relu')(x)
+
+        x = MaxPooling1D(pool_size=2)(x)
+        x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
+        x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
+
+        x = MaxPooling1D(pool_size=2)(x)
+        x = PositionalEmbedding(sequence_length=500)(x)
+        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
+
+        x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
+        x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
+
+        x = MaxPooling1D(pool_size=2)(x)
+
+        x = Bidirectional(LSTM(units*2, return_sequences=True))(x)
+        x = TransformerBlock(num_heads=4, key_dim=units*2, ff_units=512, dropout_rate=dropout)(x)
 
         x = GlobalAveragePooling1D()(x)
 
@@ -469,7 +556,7 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         )
 
         callbacks = [
-            EarlyStopping(monitor='val_mae', patience=7, restore_best_weights=True, verbose=1),
+            EarlyStopping(monitor='val_mae', patience=6, restore_best_weights=True, verbose=1),
             #ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=3, min_lr=1e-8, verbose=1)
         ]
 
@@ -507,6 +594,11 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
     print(f"📐 R² score: {ensemble_r2:.4f}")
     print(f"🏆 Used model indices: {topk_idx}")
     print(f"📊 Normalized weights: {weights}")
+
+    meta_preds_ridge, ridge_model = meta_ensemble(preds, y_test, method="ridge")
+    meta_preds_gbrt, gbrt_model = meta_ensemble(preds, y_test, method="gbrt")
+    print("\n🔍 Meta-Ensemble (Ridge) MAE:", mean_absolute_error(y_test, meta_preds_ridge))
+    print("🔍 Meta-Ensemble (GBRT) MAE:", mean_absolute_error(y_test, meta_preds_gbrt))
 
     return ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr
 
@@ -676,7 +768,7 @@ print(x_train_pruned.shape)
 #4.6918
 #📊 Test MAE: 4.7140
 
-ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=5)
+ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=6)
 #4.69
 #4.46
 #📊 Ensemble MAE: 4.5804
@@ -685,6 +777,8 @@ ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_tra
 #📊 Top-3 Weighted Ensemble MAE: 4.5213
 #📊 Top-3 Weighted Ensemble MAE: 4.4883
 #📊 Top-3 Weighted Ensemble MAE: 4.5753
+#📊 Top-3 Weighted Ensemble MAE: 4.5521
+
 
 
 errors = y_test - ensemble_preds
