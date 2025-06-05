@@ -7,26 +7,27 @@ from sklearn.metrics import mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 import os
 from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, \
-    GlobalAveragePooling1D, MultiHeadAttention, BatchNormalization, GaussianNoise, Concatenate, Add, Activation
+    GlobalAveragePooling1D, MultiHeadAttention, Concatenate, Add, Activation
 from keras.src.optimizers import Adam
-from keras.src.callbacks import EarlyStopping, ReduceLROnPlateau
+from keras.src.callbacks import EarlyStopping
 import keras
 from scipy.signal import periodogram
 from keras.src.optimizers.schedules import CosineDecayRestarts
 import tensorflow as tf
 from keras import layers
 import joblib
+from sklearn.linear_model import RidgeCV
+from sklearn.ensemble import GradientBoostingRegressor
+
+
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-from sklearn.base import BaseEstimator, RegressorMixin
-
+@register_keras_serializable()
 class PositionalEmbedding(layers.Layer):
-    def __init__(self, sequence_length):
-        super().__init__()
+    def __init__(self, sequence_length, **kwargs):
+        super().__init__(**kwargs)
         self.sequence_length = sequence_length
-        self.position_embeddings = None
-        self.token_proj = None
 
     def build(self, input_shape):
         d_model = input_shape[-1]
@@ -39,9 +40,14 @@ class PositionalEmbedding(layers.Layer):
         pos_encoding = self.position_embeddings(positions)
         return x + pos_encoding
 
+    def get_config(self):
+        config = super().get_config()
+        config.update({"sequence_length": self.sequence_length})
+        return config
+@register_keras_serializable()
 class AttentionPooling1D(layers.Layer):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def build(self, input_shape):
         self.attention_weights = self.add_weight(
@@ -52,20 +58,22 @@ class AttentionPooling1D(layers.Layer):
         )
 
     def call(self, inputs):
-        # inputs: (batch, time, features)
         scores = tf.matmul(inputs, self.attention_weights)  # (batch, time, 1)
-        scores = tf.nn.softmax(scores, axis=1)              # normalize scores
-        output = tf.reduce_sum(inputs * scores, axis=1)     # weighted sum
-        return output
+        scores = tf.nn.softmax(scores, axis=1)
+        return tf.reduce_sum(inputs * scores, axis=1)
 
-
+    def get_config(self):
+        return super().get_config()
 @register_keras_serializable()
-class TransformerBlock(keras.layers.Layer):
+class TransformerBlock(layers.Layer):
     def __init__(self, num_heads, key_dim, ff_units, dropout_rate, **kwargs):
         super().__init__(**kwargs)
-        self.attn = MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)
+        self.num_heads = num_heads
+        self.key_dim = key_dim
         self.ff_units = ff_units
         self.dropout_rate = dropout_rate
+
+        self.attn = MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)
         self.attn_norm = LayerNormalization()
         self.ffn_norm = LayerNormalization()
 
@@ -74,7 +82,7 @@ class TransformerBlock(keras.layers.Layer):
         self.ffn = Sequential([
             Dense(self.ff_units, activation='relu'),
             Dropout(self.dropout_rate),
-            Dense(embed_dim)  # ensure match for residual
+            Dense(embed_dim),
         ])
         super().build(input_shape)
 
@@ -84,41 +92,16 @@ class TransformerBlock(keras.layers.Layer):
         ffn_output = self.ffn(attn_output, training=training)
         return self.ffn_norm(attn_output + ffn_output)
 
-"""class TransformerBlock(keras.layers.Layer):
-    def __init__(self, num_heads, key_dim, ff_units, dropout_rate, **kwargs):
-        super(TransformerBlock, self).__init__(**kwargs)  # Pass kwargs to parent constructor
-        self.attn = MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)
-        self.ffn = Sequential([
-            Dense(ff_units, activation='relu'),
-            Dropout(dropout_rate),
-            Dense(key_dim)
-        ])
-        self.attn_norm = LayerNormalization()
-        self.ffn_norm = LayerNormalization()
-        self.dropout = Dropout(dropout_rate)
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "num_heads": self.num_heads,
+            "key_dim": self.key_dim,
+            "ff_units": self.ff_units,
+            "dropout_rate": self.dropout_rate,
+        })
+        return config
 
-    def call(self, x, training=False):
-        assert x.ndim == 3, "Expected input shape (batch, seq_len, features)"
-        attn_output = self.attn(x, x, training=training)
-        attn_output = self.attn_norm(x + attn_output)
-        ffn_output = self.ffn(attn_output, training=training)
-        ffn_output = self.ffn_norm(attn_output + ffn_output)
-        return ffn_output"""
-
-class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
-    def __init__(self, model):
-        self.model = model
-
-    def fit(self, X, y):
-        return self  # Already trained
-
-    def predict(self, X):
-        if hasattr(X, 'numpy'):
-            X = X.numpy()
-        X = np.asarray(X).astype(np.float32)
-        if X.ndim == 1:
-            X = X.reshape(1, -1)
-        return self.model.predict(X).reshape(-1)
 
 def get_device(force_cpu=False):
     if force_cpu or not torch.cuda.is_available():
@@ -126,6 +109,93 @@ def get_device(force_cpu=False):
         return torch.device("cpu")
     print("⚡ Using GPU")
     return torch.device("cuda")
+
+
+def multi_scale_conv_block(x, filters):
+    conv3 = Conv1D(filters, kernel_size=3, padding='same', activation='relu')(x)
+    conv5 = Conv1D(filters, kernel_size=5, padding='same', activation='relu')(x)
+    conv7 = Conv1D(filters, kernel_size=7, padding='same', activation='relu')(x)
+    concat = Concatenate()([conv3, conv5, conv7])
+    out = Conv1D(filters, kernel_size=1, padding='same', activation='relu')(concat)
+    return out
+
+def residual_block(x, filters):
+    shortcut = x
+    x = Conv1D(filters, kernel_size=3, padding='same', activation='relu')(x)
+    x = Conv1D(filters, kernel_size=3, padding='same')(x)
+    x = Add()([shortcut, x])
+    x = Activation('relu')(x)
+    return x
+
+def build_model(x_train, y_train, x_test, y_test):
+    inputs = Input(shape=x_train.shape[1:])
+    units=128
+    dropout=0
+
+    x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
+    x = Conv1D(filters=64, kernel_size=3, activation='relu')(x)
+
+    x = MaxPooling1D(pool_size=2)(x)
+    x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
+    x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
+
+    x = MaxPooling1D(pool_size=2)(x)
+    #x = PositionalEmbedding(sequence_length=500)(x)
+    x = PositionalEmbedding(sequence_length=x.shape[1])(x)
+
+    x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
+
+    x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
+    x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
+
+    x = MaxPooling1D(pool_size=2)(x)
+
+    x = Bidirectional(LSTM(units*2, return_sequences=True))(x)
+    x = TransformerBlock(num_heads=4, key_dim=units*2, ff_units=512, dropout_rate=dropout)(x)
+
+    x = GlobalAveragePooling1D()(x)
+
+    x = Dense(256, activation='relu')(x)
+    x = Dense(128, activation='relu')(x)
+    x = Dense(64, activation='relu')(x)
+    outputs = Dense(1)(x)
+
+    model = Model(inputs=inputs, outputs=outputs, name="functional_bis_model")
+
+    initial_learning_rate = 0.0001
+    first_decay_steps = 5
+    t_mul = 2.0
+    m_mul = 0.9
+
+    lr_schedule = CosineDecayRestarts(
+        initial_learning_rate=initial_learning_rate,
+        first_decay_steps=first_decay_steps,
+        t_mul=t_mul,
+        m_mul=m_mul,
+        alpha=1e-6  # minimum learning rate
+    )
+
+    model.compile(
+        optimizer=Adam(learning_rate=lr_schedule),
+        loss=keras.losses.Huber(delta=1.0),
+        metrics=['mae']
+    )
+
+    callbacks = [
+        EarlyStopping(monitor='val_mae', patience=6, restore_best_weights=True, verbose=1),
+    ]
+
+    model.fit(
+        x_train, y_train,
+        validation_data=(x_test, y_test),
+        epochs=80,
+        batch_size=32,
+        callbacks=callbacks,
+        verbose=1
+    )
+
+    return model
+
 
 def compute_dominant_frequencies(data, fs=256):
     """
@@ -264,8 +334,8 @@ def analyze_dataset(x_train, y_train, x_test, y_test):
     plot_frequency_histograms(x_train, x_test)
 
 def evaluate_model(model, x_test, y_test):
-    if x_test.ndim == 2:
-        x_test = np.expand_dims(x_test, axis=-1)
+    #if x_test.ndim == 2:
+    #    x_test = np.expand_dims(x_test, axis=-1)
 
     pred_test = model.predict(x_test).flatten()
     test_mae = mean_absolute_error(y_test, pred_test)
@@ -296,94 +366,112 @@ def evaluate_model(model, x_test, y_test):
     plt.grid(True)
     plt.show()
 
-def integrated_gradients(model, baseline, input_data, m_steps=50, batch_size=32):
+
+def optimized_integrated_gradients(model, baseline, input_data, m_steps=50, sample_batch_size=8):
     """
-    Compute Integrated Gradients using batching across samples, not alphas.
+    Safer version of Integrated Gradients: loops over samples in small batches,
+    and interpolates per-sample to reduce memory footprint.
     """
     import tensorflow as tf
 
     baseline = tf.convert_to_tensor(baseline, dtype=tf.float32)
     input_data = tf.convert_to_tensor(input_data, dtype=tf.float32)
-    n_samples = input_data.shape[0]
 
-    # Create alphas outside the loop
+    n_samples = input_data.shape[0]
     alphas = tf.linspace(0.0, 1.0, m_steps + 1)
 
     all_attributions = []
 
-    for i in range(0, n_samples, batch_size):
-        batch_input = input_data[i:i+batch_size]
-        bsz = batch_input.shape[0]
-        expanded_baseline = tf.repeat(baseline, bsz, axis=0)
+    for i in range(0, n_samples, sample_batch_size):
+        batch = input_data[i:i+sample_batch_size]
+        batch_attributions = []
 
-        interpolated = tf.stack([
-            expanded_baseline + alpha * (batch_input - expanded_baseline)
-            for alpha in alphas
-        ])  # Shape: (m_steps+1, batch_size, time, channels)
+        for j in range(batch.shape[0]):
+            x = batch[j:j+1]
+            baseline_repeated = tf.repeat(baseline, repeats=m_steps + 1, axis=0)
+            x_repeated = tf.repeat(x, repeats=m_steps + 1, axis=0)
 
-        interpolated = tf.reshape(interpolated, [(m_steps+1)*bsz] + list(batch_input.shape[1:]))
+            interpolated = baseline_repeated + tf.reshape(alphas, (-1, 1, 1)) * (x_repeated - baseline_repeated)
 
-        with tf.GradientTape(watch_accessed_variables=False) as tape:
-            tape.watch(interpolated)
-            predictions = model(interpolated)
-            predictions = tf.reshape(predictions, [m_steps+1, bsz, -1])
-            outputs = predictions[:, :, 0]  # Use first output neuron
+            with tf.GradientTape(watch_accessed_variables=False) as tape:
+                tape.watch(interpolated)
+                predictions = model(interpolated)
+                outputs = predictions[:, 0]
 
-        grads = tape.gradient(outputs, interpolated)
-        grads = tf.reshape(grads, [m_steps+1, bsz] + list(batch_input.shape[1:]))
+            grads = tape.gradient(outputs, interpolated)
+            grads = tf.reshape(grads, [m_steps + 1] + list(x.shape[1:]))
+            avg_grads = tf.reduce_mean((grads[:-1] + grads[1:]) / 2.0, axis=0)
 
-        avg_grads = tf.reduce_mean((grads[:-1] + grads[1:]) / 2.0, axis=0)
-        attributions = (batch_input - baseline) * avg_grads
+            attr = (x - baseline) * avg_grads
+            batch_attributions.append(attr)
 
-        all_attributions.append(attributions)
+        all_attributions.append(tf.concat(batch_attributions, axis=0))
 
     return tf.concat(all_attributions, axis=0).numpy()
 
-def build_model(x_train, y_train, x_test, y_test):
-    inputs = Input(shape=x_train.shape[1:])
+def visualize_saliency(saliency_maps):
+    # Temporal importance visualization
+    plt.figure(figsize=(12, 6))
 
-    x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
-    x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
-    x = MaxPooling1D(pool_size=2)(x)
+    # First sample, first 3 channels
+    for i in range(3):
+        plt.subplot(3, 1, i+1)
+        plt.plot(saliency_maps[0,:,i])
+        plt.title(f"Temporal Importance - Channel {i}")
+        plt.xlabel("Timesteps")
+        plt.ylabel("Importance")
 
-    x = Bidirectional(LSTM(256, return_sequences=True))(x)
-    x = LayerNormalization()(x)
-    x = LSTM(128, return_sequences=True)(x)
+    plt.tight_layout()
+    plt.show()
 
-    x = TransformerBlock(num_heads=4, key_dim=128, ff_units=256, dropout_rate=0)(x)
-    x = TransformerBlock(num_heads=4, key_dim=128, ff_units=256, dropout_rate=0)(x)
+def perform_integrated_gradients_feature_importance(model, x_data, channel_threshold=0.1, timestep_percentile=50):
+    # Baseline: Zero-valued EEG signals
+    baseline = np.zeros((1, 1024, 3))
 
-    x = GlobalAveragePooling1D()(x)
-
-    x = Dense(256, activation='relu')(x)
-    x = LayerNormalization()(x)
-    x = Dropout(0)(x)
-    x = Dense(64, activation='relu')(x)
-    outputs = Dense(1)(x)
-
-    model = Model(inputs=inputs, outputs=outputs, name="functional_bis_model")
-
-    model.compile(
-        optimizer=Adam(0.00001),
-        loss=keras.losses.Huber(delta=1.0),
-        metrics=['mae']
+    saliency_maps = optimized_integrated_gradients(
+        model=model,
+        baseline=baseline,
+        input_data=x_data,
+        m_steps=50,
+        sample_batch_size=16
     )
 
-    callbacks = [
-        EarlyStopping(monitor='val_mae', patience=10, restore_best_weights=True, verbose=1),
-        ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5, min_lr=1e-8, verbose=1)
-    ]
+    visualize_saliency(saliency_maps=saliency_maps)
 
-    model.fit(
-        x_train, y_train,
-        validation_data=(x_test, y_test),
-        epochs=80,
-        batch_size=8, #original= 16
-        callbacks=callbacks,
-        verbose=1
-    )
+    # 1. Channel (IMF) selection
+    channel_importance = np.sum(np.abs(saliency_maps), axis=(0,1))
+    total_importance = np.sum(channel_importance)
+    important_channels = np.where(channel_importance/total_importance >= channel_threshold)[0]
 
-    return model
+    if len(important_channels) == 0:
+        important_channels = np.array([np.argmax(channel_importance)])
+
+    # 2. Temporal pruning within channels
+    timestep_masks = {}
+    for ch in important_channels:
+        # Average importance across samples for this channel
+        timestep_importance = np.mean(np.abs(saliency_maps[:,:,ch]), axis=0)
+
+        # Dynamic threshold based on percentile
+        threshold = np.percentile(timestep_importance, timestep_percentile)
+        timestep_masks[ch] = timestep_importance >= threshold
+
+    return important_channels, timestep_masks
+
+def apply_feature_pruning(x_data, important_channels, timestep_masks):
+    """Prunes both channels and timesteps within channels"""
+    # 1. Select important channels
+    x_pruned = x_data[:, :, important_channels]
+
+    # 2. Apply temporal masks to each selected channel
+    for i, orig_ch in enumerate(important_channels):
+        mask = timestep_masks[orig_ch]
+        # Zero out unimportant timesteps in this channel
+        x_pruned[:, ~mask, i] = 0.0  # Replace with baseline if needed
+
+    return x_pruned\
+
+
 
 def weighted_topk_ensemble(preds, val_maes, k=3):
     val_maes = np.array(val_maes)
@@ -405,26 +493,7 @@ def weighted_topk_ensemble(preds, val_maes, k=3):
 
     return ensemble_preds, topk_idx, weights
 
-def multi_scale_conv_block(x, filters):
-    conv3 = Conv1D(filters, kernel_size=3, padding='same', activation='relu')(x)
-    conv5 = Conv1D(filters, kernel_size=5, padding='same', activation='relu')(x)
-    conv7 = Conv1D(filters, kernel_size=7, padding='same', activation='relu')(x)
-    concat = Concatenate()([conv3, conv5, conv7])
-    out = Conv1D(filters, kernel_size=1, padding='same', activation='relu')(concat)
-    return out
-
-def residual_block(x, filters):
-    shortcut = x
-    x = Conv1D(filters, kernel_size=3, padding='same', activation='relu')(x)
-    x = Conv1D(filters, kernel_size=3, padding='same')(x)
-    x = Add()([shortcut, x])
-    x = Activation('relu')(x)
-    return x
-
-from sklearn.linear_model import RidgeCV
-from sklearn.ensemble import GradientBoostingRegressor
-
-def meta_ensemble(preds, y_true, method="ridge"):
+def meta_ensemble(preds, y_true, method="ridge", val_maes=None, top_k=None):
     """
     Train a second-level model (meta-learner) on base model predictions.
 
@@ -432,13 +501,23 @@ def meta_ensemble(preds, y_true, method="ridge"):
         preds: list of np.arrays of shape (n_samples, 1)
         y_true: true targets, shape (n_samples,)
         method: "ridge" or "gbrt"
+        val_maes: validation MAEs for top_k selection
+        top_k: number of top models to use (optional)
 
     Returns:
         final_predictions: predictions from meta-model
         model: trained meta-model
     """
 
-    # Stack predictions from base models (shape: [n_models, n_samples, 1]) -> (n_samples, n_models)
+    y_true = y_true.flatten()
+
+    if top_k is not None:
+        if val_maes is None:
+            raise ValueError("val_maes must be provided when using top_k")
+        top_indices = np.argsort(val_maes)[:top_k]
+        preds = [preds[i] for i in top_indices]
+        print(f"🔢 Using top-{top_k} models: indices {top_indices}")
+
     P = np.hstack(preds)
 
     if method == "ridge":
@@ -452,7 +531,6 @@ def meta_ensemble(preds, y_true, method="ridge"):
     final_predictions = model.predict(P)
     return final_predictions, model
 
-
 def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
     preds = []
@@ -463,50 +541,12 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
     for i in range(n_models):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
 
-        """units = int(np.random.choice([64]))
-        dropout = float(np.random.choice([0, 0.3]))
-        batch_size = int(np.random.choice([16, 32]))
-        lr = float(np.random.choice([0.001, 0.0001]))
-
-        print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
-
-        x = multi_scale_conv_block(inputs, 64)
-        x = residual_block(x, 64)
-
-        x = multi_scale_conv_block(x, 128)
-        x = residual_block(x, 128)
-
-        x = multi_scale_conv_block(x, 256)
-        x = residual_block(x, 256)
-
-        x = PositionalEmbedding(sequence_length=x.shape[1])(x)
-        x = TransformerBlock(num_heads=4, key_dim=128, ff_units=128, dropout_rate=dropout)(x)
-
-        #x = Dense(128, activation='relu')(x)
-        #x = Dense(64, activation='relu')(x)
-
-        x = Bidirectional(LSTM(units, return_sequences=True))(x)
-        x = TransformerBlock(num_heads=8, key_dim=256, ff_units=128, dropout_rate=dropout)(x)
-        #x = TransformerBlock(num_heads=4, key_dim=128, ff_units=256, dropout_rate=dropout)(x)
-        x=LayerNormalization()(x)
-
-        #x = GlobalAveragePooling1D()(x)
-        x= AttentionPooling1D()(x)
-
-        x = Dense(512, activation='relu')(x)
-        x = Dense(256, activation='relu')(x)
-        x= Dropout(dropout)(x)
-        x = Dense(128, activation='relu')(x)
-        x= Dropout(dropout)(x)
-        x = Dense(64, activation='relu')(x)
-        outputs = Dense(1)(x)"""
         units = int(np.random.choice([128]))
         dropout = float(np.random.choice([0, 0.2]))
-        batch_size = int(np.random.choice([32, 100]))
+        batch_size = int(np.random.choice([32, 128]))
         lr = float(np.random.choice([0.0001]))
 
         print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
-
 
         x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
         x = Conv1D(filters=64, kernel_size=3, activation='relu')(x)
@@ -557,7 +597,6 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
         callbacks = [
             EarlyStopping(monitor='val_mae', patience=6, restore_best_weights=True, verbose=1),
-            #ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=3, min_lr=1e-8, verbose=1)
         ]
 
         model.fit(
@@ -569,7 +608,7 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
             verbose=1
         )
 
-        model.save(f'ensemble_model_{i}.keras')
+        model.save(f'ensemble_model_v4__{i}.keras')
         y_pred = model.predict(x_test, verbose=1)
         preds.append(y_pred)
         mae = mean_absolute_error(y_test, y_pred)
@@ -595,122 +634,67 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
     print(f"🏆 Used model indices: {topk_idx}")
     print(f"📊 Normalized weights: {weights}")
 
-    meta_preds_ridge, ridge_model = meta_ensemble(preds, y_test, method="ridge")
-    meta_preds_gbrt, gbrt_model = meta_ensemble(preds, y_test, method="gbrt")
-    print("\n🔍 Meta-Ensemble (Ridge) MAE:", mean_absolute_error(y_test, meta_preds_ridge))
-    print("🔍 Meta-Ensemble (GBRT) MAE:", mean_absolute_error(y_test, meta_preds_gbrt))
-
     return ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr
 
-def optimized_integrated_gradients(model, baseline, input_data, m_steps=50, sample_batch_size=8):
-    """
-    Safer version of Integrated Gradients: loops over samples in small batches,
-    and interpolates per-sample to reduce memory footprint.
-    """
-    import tensorflow as tf
+"""def create_GBRT(n_models, x_test, y_test):
 
-    baseline = tf.convert_to_tensor(baseline, dtype=tf.float32)
-    input_data = tf.convert_to_tensor(input_data, dtype=tf.float32)
+    preds=[]
+    val_maes=[]
 
-    n_samples = input_data.shape[0]
-    alphas = tf.linspace(0.0, 1.0, m_steps + 1)
+    for i in range(n_models):
+        model = load_model(f'ensemble_model_v4__{i}.keras')
+        y_pred = model.predict(x_test, verbose=1)
+        preds.append(y_pred)
+        mae = mean_absolute_error(y_test, y_pred)
+        val_maes.append(mae)
+        print(f"📌 Model {i + 1} MAE: {mae:.4f}")
 
-    all_attributions = []
+    meta_preds_gbrt, gbrt_model = meta_ensemble(preds, y_test, method="gbrt", val_maes=val_maes, top_k=3)
+    joblib.dump(gbrt_model, "gbrt_model.pkl")
+    joblib.dump(preds, "preds.pkl")
 
-    for i in range(0, n_samples, sample_batch_size):
-        batch = input_data[i:i+sample_batch_size]
-        batch_attributions = []
+    #gbrt_model = joblib.load("gbrt_model.pkl")
 
-        for j in range(batch.shape[0]):
-            x = batch[j:j+1]
-            baseline_repeated = tf.repeat(baseline, repeats=m_steps + 1, axis=0)
-            x_repeated = tf.repeat(x, repeats=m_steps + 1, axis=0)
+    P_test = np.hstack(preds)
+    meta_test_preds = gbrt_model.predict(P_test)
+    mae = mean_absolute_error(y_test, meta_test_preds)
+    print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")"""
 
-            interpolated = baseline_repeated + tf.reshape(alphas, (-1, 1, 1)) * (x_repeated - baseline_repeated)
+def create_GBRT(n_models, x_test, y_test):
+    preds = []
+    val_maes = []
 
-            with tf.GradientTape(watch_accessed_variables=False) as tape:
-                tape.watch(interpolated)
-                predictions = model(interpolated)
-                outputs = predictions[:, 0]
+    for i in range(n_models):
+        model = load_model(f'ensemble_model_v4__{i}.keras')
+        y_pred = model.predict(x_test, verbose=1)
+        preds.append(y_pred)
+        mae = mean_absolute_error(y_test, y_pred)
+        val_maes.append(mae)
+        print(f"📌 Model {i + 1} MAE: {mae:.4f}")
 
-            grads = tape.gradient(outputs, interpolated)
-            grads = tf.reshape(grads, [m_steps + 1] + list(x.shape[1:]))
-            avg_grads = tf.reduce_mean((grads[:-1] + grads[1:]) / 2.0, axis=0)
+    # Get top-k indices
+    top_k = 3
+    topk_idx = np.argsort(val_maes)[:top_k]
+    topk_preds = [preds[i] for i in topk_idx]
 
-            attr = (x - baseline) * avg_grads
-            batch_attributions.append(attr)
-
-        all_attributions.append(tf.concat(batch_attributions, axis=0))
-
-    return tf.concat(all_attributions, axis=0).numpy()
-
-def perform_integrated_gradients_feature_importance(model, x_data, channel_threshold=0.1, timestep_percentile=50):
-    # Baseline: Zero-valued EEG signals
-    baseline = np.zeros((1, 1024, 3))
-
-    # Compute saliency maps using your integrated_gradients function
-    """saliency_maps = integrated_gradients(
-        model=model,
-        baseline=baseline,
-        input_data=x_data[:200]  # Use x_data instead of x_train
-    )"""
-    saliency_maps = optimized_integrated_gradients(
-        model=model,
-        baseline=baseline,
-        input_data=x_data,
-        m_steps=50,
-        sample_batch_size=16
+    # Train meta-model
+    meta_preds_gbrt, gbrt_model = meta_ensemble(
+        topk_preds, y_test, method="gbrt"
     )
 
-    visualize_saliency(saliency_maps=saliency_maps)
+    joblib.dump(gbrt_model, "gbrt_model.pkl")
+    joblib.dump(preds, "preds.pkl")  # optionally save full preds
 
-    # 1. Channel (IMF) selection
-    channel_importance = np.sum(np.abs(saliency_maps), axis=(0,1))
-    total_importance = np.sum(channel_importance)
-    important_channels = np.where(channel_importance/total_importance >= channel_threshold)[0]
+    # Use only top-k preds for test input
+    P_test = np.hstack([preds[i] for i in topk_idx])
+    assert P_test.shape[1] == gbrt_model.n_features_in_, \
+        f"Feature mismatch: expected {gbrt_model.n_features_in_}, got {P_test.shape[1]}"
 
-    if len(important_channels) == 0:
-        important_channels = np.array([np.argmax(channel_importance)])
+    meta_test_preds = gbrt_model.predict(P_test)
+    mae = mean_absolute_error(y_test, meta_test_preds)
+    print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")
 
-    # 2. Temporal pruning within channels
-    timestep_masks = {}
-    for ch in important_channels:
-        # Average importance across samples for this channel
-        timestep_importance = np.mean(np.abs(saliency_maps[:,:,ch]), axis=0)
 
-        # Dynamic threshold based on percentile
-        threshold = np.percentile(timestep_importance, timestep_percentile)
-        timestep_masks[ch] = timestep_importance >= threshold
-
-    return important_channels, timestep_masks
-
-def apply_feature_pruning(x_data, important_channels, timestep_masks):
-    """Prunes both channels and timesteps within channels"""
-    # 1. Select important channels
-    x_pruned = x_data[:, :, important_channels]
-
-    # 2. Apply temporal masks to each selected channel
-    for i, orig_ch in enumerate(important_channels):
-        mask = timestep_masks[orig_ch]
-        # Zero out unimportant timesteps in this channel
-        x_pruned[:, ~mask, i] = 0.0  # Replace with baseline if needed
-
-    return x_pruned
-
-def visualize_saliency(saliency_maps):
-    # Temporal importance visualization
-    plt.figure(figsize=(12, 6))
-
-    # First sample, first 3 channels
-    for i in range(3):
-        plt.subplot(3, 1, i+1)
-        plt.plot(saliency_maps[0,:,i])
-        plt.title(f"Temporal Importance - Channel {i}")
-        plt.xlabel("Timesteps")
-        plt.ylabel("Importance")
-
-    plt.tight_layout()
-    plt.show()
 
 
 dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
@@ -720,29 +704,28 @@ x_test, y_test = dataset.x_test, dataset.y_test
 c_test= dataset.c_test
 c_train= dataset.c_train
 
-""""#analyze_dataset(x_train, y_train, x_test, y_test)
+#analyze_dataset(x_train, y_train, x_test, y_test)
 
 print("x_train_raw shape:", x_train.shape)
 print("x_test_raw shape:", x_test.shape)
 
-model = build_model(x_train, y_train, x_test, y_test)
-model.save("eeg_regressor_v3.keras")
 
-#model=load_model("eeg_regressor_v2.keras")
+
+#model = build_model(x_train, y_train, x_test, y_test)
+#model.save("eeg_regressor_v4.keras")
+model = load_model("eeg_regressor_v4.keras")
 evaluate_model(model, x_test, y_test)
-#5.51
-#5.0448
-#📊 Test MAE: 4.9507
 
-# Compute important features ONCE using training data
+
+"""# Compute important features using training data
 important_channels, timestep_masks = perform_integrated_gradients_feature_importance(
     model, x_train[:2000],
     channel_threshold=0.15,
     timestep_percentile=60
 )
 
-joblib.dump((important_channels, timestep_masks), "pruning_artifacts_v3.joblib")
-print("✅ Saved pruning artifacts to pruning_artifacts_v3.joblib")
+joblib.dump((important_channels, timestep_masks), "pruning_artifacts_v4.joblib")
+print("✅ Saved pruning artifacts to pruning_artifacts_v4.joblib")
 
 # Prune both datasets using same features (prevents data leakage)
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
@@ -751,56 +734,19 @@ x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks
 assert x_train_pruned.shape[2] == len(important_channels), \
     "Channel count mismatch after pruning"
 assert x_test_pruned.shape[1:] == x_train_pruned.shape[1:], \
-    "Train/test shape mismatch"
-
-model = build_model(x_train_pruned, y_train, x_test_pruned, y_test)
-model.save("eeg_regressor_pruned_v3.keras")"""
+    "Train/test shape mismatch"""
 
 important_channels, timestep_masks = joblib.load("pruning_artifacts_v2.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 print(x_train_pruned.shape)
 
-#model= load_model("eeg_regressor_pruned_v2.keras")
-#model.summary()
-#evaluate_model(model, x_test_pruned, y_test)
-#5.14
-#4.6918
-#📊 Test MAE: 4.7140
 
-ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=6)
-#4.69
-#4.46
-#📊 Ensemble MAE: 4.5804
-#📊 Top-3 Weighted Ensemble MAE: 4.5256
-# 📊 Top-3 Weighted Ensemble MAE: 4.4184
-#📊 Top-3 Weighted Ensemble MAE: 4.5213
-#📊 Top-3 Weighted Ensemble MAE: 4.4883
-#📊 Top-3 Weighted Ensemble MAE: 4.5753
-#📊 Top-3 Weighted Ensemble MAE: 4.5521
+model = build_model(x_train_pruned, y_train, x_test_pruned, y_test)
+model.save("eeg_regressor_pruned_v4.keras")
+evaluate_model(model, x_test_pruned, y_test)
 
-
-
-errors = y_test - ensemble_preds
-
-# Histogram of prediction errors
-plt.figure(figsize=(8, 4))
-plt.hist(errors, bins=50, edgecolor='black')
-plt.xlabel('Prediction Error')
-plt.ylabel('Count')
-plt.title('Histogram of Ensemble Prediction Errors')
-plt.grid(True)
-plt.show()
-
-# Colored scatter plot of actual vs predicted
-abs_errors = np.abs(errors)
-
-plt.figure(figsize=(6, 6))
-sc = plt.scatter(y_test, ensemble_preds, c=abs_errors, s=2, cmap='viridis', alpha=0.6)
-plt.xlabel('Actual BIS')
-plt.ylabel('Predicted BIS')
-plt.title('Ensemble Prediction Scatter (Colored by Absolute Error)')
-plt.colorbar(sc, label='Absolute Error')
-plt.plot([0, max(y_test)], [0, max(y_test)], 'r--')
-plt.grid(True)
-plt.show()
+print("beginning ensemble")
+n_models=6
+ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=n_models)
+create_GBRT(n_models=n_models, x_test=x_test_pruned, y_test=y_test)
