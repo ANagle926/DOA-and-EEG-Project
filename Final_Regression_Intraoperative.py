@@ -645,7 +645,7 @@ def create_GBRT(n_models, x_test, y_test):
         "gbrt_model": gbrt_model,
         "topk_idx": topk_idx,
         "topk_preds_test": P_test
-    }, "gbrt_model.pkl")
+    }, "Saved Model Versions/gbrt_model.pkl")
 
 
     # Use only top-k preds for test input
@@ -673,7 +673,7 @@ print("x_test_raw shape:", x_test.shape)
 
 #model = build_model(x_train, y_train, x_test, y_test)
 #model.save("eeg_regressor_v4.keras")
-model = load_model("eeg_regressor_v4.keras")
+model = load_model("Saved Model Versions/eeg_regressor_v4.keras")
 evaluate_model(model, x_test, y_test)
 
 
@@ -696,7 +696,7 @@ assert x_train_pruned.shape[2] == len(important_channels), \
 assert x_test_pruned.shape[1:] == x_train_pruned.shape[1:], \
     "Train/test shape mismatch"""
 
-important_channels, timestep_masks = joblib.load("pruning_artifacts_v2.joblib")
+important_channels, timestep_masks = joblib.load("Saved Model Versions/Pruning/pruning_artifacts_v2.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 print(x_train_pruned.shape)
@@ -704,7 +704,7 @@ print(x_train_pruned.shape)
 
 #model = build_model(x_train_pruned, y_train, x_test_pruned, y_test)
 #model.save("eeg_regressor_pruned_v4.keras")
-model = load_model("eeg_regressor_pruned_v4.keras")
+model = load_model("Saved Model Versions/Pruning/eeg_regressor_pruned_v4.keras")
 evaluate_model(model, x_test_pruned, y_test)
 
 n_models=6
