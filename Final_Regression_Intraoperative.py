@@ -20,7 +20,6 @@ from sklearn.linear_model import RidgeCV
 from sklearn.ensemble import GradientBoostingRegressor
 
 
-
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 @register_keras_serializable()
