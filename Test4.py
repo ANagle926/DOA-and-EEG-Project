@@ -111,22 +111,6 @@ def get_device(force_cpu=False):
     return torch.device("cuda")
 
 
-def multi_scale_conv_block(x, filters):
-    conv3 = Conv1D(filters, kernel_size=3, padding='same', activation='relu')(x)
-    conv5 = Conv1D(filters, kernel_size=5, padding='same', activation='relu')(x)
-    conv7 = Conv1D(filters, kernel_size=7, padding='same', activation='relu')(x)
-    concat = Concatenate()([conv3, conv5, conv7])
-    out = Conv1D(filters, kernel_size=1, padding='same', activation='relu')(concat)
-    return out
-
-def residual_block(x, filters):
-    shortcut = x
-    x = Conv1D(filters, kernel_size=3, padding='same', activation='relu')(x)
-    x = Conv1D(filters, kernel_size=3, padding='same')(x)
-    x = Add()([shortcut, x])
-    x = Activation('relu')(x)
-    return x
-
 def build_model(x_train, y_train, x_test, y_test):
     inputs = Input(shape=x_train.shape[1:])
     units=128
@@ -140,7 +124,6 @@ def build_model(x_train, y_train, x_test, y_test):
     x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
 
     x = MaxPooling1D(pool_size=2)(x)
-    #x = PositionalEmbedding(sequence_length=500)(x)
     x = PositionalEmbedding(sequence_length=x.shape[1])(x)
 
     x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
@@ -472,7 +455,6 @@ def apply_feature_pruning(x_data, important_channels, timestep_masks):
     return x_pruned\
 
 
-
 def weighted_topk_ensemble(preds, val_maes, k=3):
     val_maes = np.array(val_maes)
     preds = np.array(preds)  # shape: (n_models, n_samples)
@@ -541,9 +523,9 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
     for i in range(n_models):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
 
-        units = int(np.random.choice([128]))
-        dropout = float(np.random.choice([0, 0.2]))
-        batch_size = int(np.random.choice([32, 128]))
+        units = int(np.random.choice([64, 128]))
+        dropout = float(np.random.choice([0]))
+        batch_size = int(np.random.choice([32, 100]))
         lr = float(np.random.choice([0.0001]))
 
         print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
@@ -557,7 +539,7 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
         x = MaxPooling1D(pool_size=2)(x)
         x = PositionalEmbedding(sequence_length=500)(x)
-        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
+        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout)(x)
 
         x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
         x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
@@ -577,9 +559,9 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         model = Model(inputs=inputs, outputs=outputs, name="functional_bis_model")
 
         initial_learning_rate = lr
-        first_decay_steps = 5  # number of steps (or epochs) before first decay
-        t_mul = 2.0              # how fast decay cycles grow
-        m_mul = 0.9              # scale of restart learning rate
+        first_decay_steps = 5
+        t_mul = 2.0
+        m_mul = 0.9
 
         lr_schedule = CosineDecayRestarts(
             initial_learning_rate=initial_learning_rate,
@@ -636,30 +618,6 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
     return ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr
 
-"""def create_GBRT(n_models, x_test, y_test):
-
-    preds=[]
-    val_maes=[]
-
-    for i in range(n_models):
-        model = load_model(f'ensemble_model_v4__{i}.keras')
-        y_pred = model.predict(x_test, verbose=1)
-        preds.append(y_pred)
-        mae = mean_absolute_error(y_test, y_pred)
-        val_maes.append(mae)
-        print(f"📌 Model {i + 1} MAE: {mae:.4f}")
-
-    meta_preds_gbrt, gbrt_model = meta_ensemble(preds, y_test, method="gbrt", val_maes=val_maes, top_k=3)
-    joblib.dump(gbrt_model, "gbrt_model.pkl")
-    joblib.dump(preds, "preds.pkl")
-
-    #gbrt_model = joblib.load("gbrt_model.pkl")
-
-    P_test = np.hstack(preds)
-    meta_test_preds = gbrt_model.predict(P_test)
-    mae = mean_absolute_error(y_test, meta_test_preds)
-    print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")"""
-
 def create_GBRT(n_models, x_test, y_test):
     preds = []
     val_maes = []
@@ -678,12 +636,17 @@ def create_GBRT(n_models, x_test, y_test):
     topk_preds = [preds[i] for i in topk_idx]
 
     # Train meta-model
-    meta_preds_gbrt, gbrt_model = meta_ensemble(
-        topk_preds, y_test, method="gbrt"
-    )
+    meta_preds_gbrt, gbrt_model = meta_ensemble(topk_preds, y_test, method="gbrt")
 
-    joblib.dump(gbrt_model, "gbrt_model.pkl")
-    joblib.dump(preds, "preds.pkl")  # optionally save full preds
+    P_test = np.hstack(topk_preds)  # Make sure topk_preds is a list of (n_samples, 1) arrays
+
+    # Save everything
+    joblib.dump({
+        "gbrt_model": gbrt_model,
+        "topk_idx": topk_idx,
+        "topk_preds_test": P_test
+    }, "gbrt_model.pkl")
+
 
     # Use only top-k preds for test input
     P_test = np.hstack([preds[i] for i in topk_idx])
@@ -693,8 +656,6 @@ def create_GBRT(n_models, x_test, y_test):
     meta_test_preds = gbrt_model.predict(P_test)
     mae = mean_absolute_error(y_test, meta_test_preds)
     print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")
-
-
 
 
 dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
@@ -708,7 +669,6 @@ c_train= dataset.c_train
 
 print("x_train_raw shape:", x_train.shape)
 print("x_test_raw shape:", x_test.shape)
-
 
 
 #model = build_model(x_train, y_train, x_test, y_test)
@@ -742,11 +702,11 @@ x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks
 print(x_train_pruned.shape)
 
 
-model = build_model(x_train_pruned, y_train, x_test_pruned, y_test)
-model.save("eeg_regressor_pruned_v4.keras")
+#model = build_model(x_train_pruned, y_train, x_test_pruned, y_test)
+#model.save("eeg_regressor_pruned_v4.keras")
+model = load_model("eeg_regressor_pruned_v4.keras")
 evaluate_model(model, x_test_pruned, y_test)
 
-print("beginning ensemble")
 n_models=6
 ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=n_models)
 create_GBRT(n_models=n_models, x_test=x_test_pruned, y_test=y_test)
