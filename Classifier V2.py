@@ -1,14 +1,19 @@
-import joblib
-import numpy as np
 from joblib import load
-from keras.src.layers import MultiHeadAttention, LayerNormalization, Dense, Dropout
+from keras import Sequential, Model
 from keras.src.saving import load_model, register_keras_serializable
-from matplotlib import pyplot as plt
-from sklearn.metrics import mean_absolute_error, r2_score
-from keras import layers, Sequential
+import matplotlib.pyplot as plt
+from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, \
+    GlobalAveragePooling1D, MultiHeadAttention, Concatenate, Add, Activation, BatchNormalization
 import tensorflow as tf
+from keras import layers
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, r2_score
+import seaborn as sns
+import numpy as np
+import joblib
+from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import accuracy_score, classification_report
 
-
+# 0.8 accuracy
 
 @register_keras_serializable()
 class PositionalEmbedding(layers.Layer):
@@ -89,10 +94,6 @@ class TransformerBlock(layers.Layer):
         })
         return config
 
-import numpy as np
-import joblib
-from sklearn.metrics import mean_absolute_error
-
 
 def optimized_integrated_gradients(model, baseline, input_data, m_steps=50, sample_batch_size=8):
     """
@@ -164,7 +165,7 @@ def apply_feature_pruning(x_data, important_channels, timestep_masks):
 
     return x_pruned
 
-def fast_predict_with_ensemble(x_test, y_test=None, meta_model_path="/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/gbrt_model.pkl"):
+def fast_predict_with_ensemble(x_test, y_test=None, meta_model_path="Saved Model Versions/gbrt_model.pkl"):
     # Load meta-model and top-k indices
     meta_data = joblib.load(meta_model_path)
     gbrt_model = meta_data["gbrt_model"]
@@ -173,7 +174,7 @@ def fast_predict_with_ensemble(x_test, y_test=None, meta_model_path="/mnt/c/User
     # Load only top-k models and predict
     topk_preds = []
     for i in topk_idx:
-        model = load_model(f'/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/ensemble_model_v4__{i}.keras')
+        model = load_model(f'Saved Model Versions/Ensemble/ensemble_model_v4__{i}.keras')
         y_pred = model.predict(x_test, verbose=0)
         topk_preds.append(y_pred)
     P_test = np.hstack(topk_preds)
@@ -192,14 +193,44 @@ def fast_predict_with_ensemble(x_test, y_test=None, meta_model_path="/mnt/c/User
 
     return meta_preds, mae
 
+def threshold_classifier(y_pred_reg, thresholds=(40, 60)):
+    """
+    Convert BIS regression predictions into 3-class discrete labels.
+    - BIS < 40     → Class 0 (AD)
+    - 40–60        → Class 1 (AO)
+    - >60          → Class 2 (AL)
+    """
+    t1, t2 = thresholds
+    return np.where(y_pred_reg < t1, 0,
+                    np.where(y_pred_reg <= t2, 1, 2))
+
+def evaluate_threshold_based_classifier(y_true_cont, y_pred_cont, thresholds=(40, 60)):
+    y_true_cls = threshold_classifier(y_true_cont, thresholds)
+    y_pred_cls = threshold_classifier(y_pred_cont, thresholds)
+
+    acc = accuracy_score(y_true_cls, y_pred_cls)
+    print(f"Threshold-based Classification Accuracy: {acc:.4f}\n")
+    print("Classification Report:\n", classification_report(y_true_cls, y_pred_cls, digits=4))
+
+    cm = confusion_matrix(y_true_cls, y_pred_cls)
+    return acc, cm
+
+
 
 dataset = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
 x_test, y_test = dataset.x_test, dataset.y_test
 x_train, y_train = dataset.x_train, dataset.y_train
 
-important_channels, timestep_masks = joblib.load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/pruning_artifacts_v2.joblib")
+important_channels, timestep_masks = joblib.load("Saved Model Versions/Pruning/pruning_artifacts_v2.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 
 meta_preds, mae = fast_predict_with_ensemble(x_test_pruned, y_test)
 
+# Evaluate using domain thresholds (fixed)
+acc, cm = evaluate_threshold_based_classifier(y_test, meta_preds)
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.title("Confusion Matrix")
+plt.show()
