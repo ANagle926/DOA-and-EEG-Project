@@ -12,7 +12,6 @@ from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, Layer
 from keras.src.optimizers import Adam
 from keras.src.callbacks import EarlyStopping
 import keras
-from scipy.signal import periodogram
 from keras.src.optimizers.schedules import CosineDecayRestarts
 import tensorflow as tf
 from keras import layers
@@ -20,6 +19,7 @@ import joblib
 from sklearn.linear_model import RidgeCV
 from sklearn.ensemble import GradientBoostingRegressor
 
+#Confidence= 0.95
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
