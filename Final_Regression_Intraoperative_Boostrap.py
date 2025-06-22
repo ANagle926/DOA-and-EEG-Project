@@ -19,8 +19,6 @@ import joblib
 from sklearn.linear_model import RidgeCV
 from sklearn.ensemble import GradientBoostingRegressor
 
-#Confidence= 0.95
-
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 @register_keras_serializable()
