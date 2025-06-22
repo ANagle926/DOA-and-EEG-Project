@@ -670,7 +670,7 @@ def create_GBRT(n_models, x_test, y_test):
         "gbrt_classifier_model": gbrt_model,
         "topk_idx_classifier": topk_idx,
         "topk_preds_test_classifier": P_test
-    }, "Saved Model Versions/gbrt_model_classifier.pkl")
+    }, "Saved Model Versions/Classifier/gbrt_model_classifier.pkl")
 
     meta_test_preds_cls = np.argmax(meta_preds_gbrt, axis=1)
     y_true_cls = np.argmax(y_test, axis=1)

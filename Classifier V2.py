@@ -221,7 +221,7 @@ dataset = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Fil
 x_test, y_test = dataset.x_test, dataset.y_test
 x_train, y_train = dataset.x_train, dataset.y_train
 
-important_channels, timestep_masks = joblib.load("Saved Model Versions/Pruning/pruning_artifacts_v2.joblib")
+important_channels, timestep_masks = joblib.load("Saved Model Versions/Regressor/Pruning/pruning_artifacts_v2.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 

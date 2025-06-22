@@ -372,7 +372,7 @@ def create_GBRT(n_models, x_test, y_test):
         "gbrt_model": gbrt_model,
         "topk_idx": topk_idx,
         "topk_preds_test": P_test
-    }, "Saved Model Versions/gbrt_model.pkl")
+    }, "Saved Model Versions/Regressor/gbrt_model.pkl")
 
 
     # Use only top-k preds for test input
@@ -395,7 +395,7 @@ c_test= dataset.c_test
 c_train= dataset.c_train
 
 
-important_channels, timestep_masks = joblib.load("Saved Model Versions/Pruning/pruning_artifacts_v2.joblib")
+important_channels, timestep_masks = joblib.load("Saved Model Versions/Regressor/Pruning/pruning_artifacts_v2.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 print(x_train_pruned.shape)
