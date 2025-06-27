@@ -1,57 +1,13 @@
 import numpy as np
 import pandas as pd
-import psutil
 import vitaldb
-from joblib import load, Parallel, delayed, dump
-from matplotlib import pyplot as plt
-
-
-from sklearn.preprocessing import StandardScaler
-from PyEMD import EEMD
-import time
-
-def apply_eemd_to_wave(wave):
-    noise_std = 0.03
-
-    eemd = EEMD()
-    eemd.noise_width = noise_std
-    imfs = eemd.eemd(wave)
-
-    kept_imfs = imfs[:3]
-
-    # Handle edge cases
-    if kept_imfs.shape[0] < 3:
-        # Pad with zeros if less than 3 IMFs
-        pad = np.zeros((3 - kept_imfs.shape[0], wave.shape[0]))
-        kept_imfs = np.vstack([kept_imfs, pad])
-
-    # Transpose to shape (125, 3) for each sample
-    return kept_imfs[:3].T
-
-def process_dataset_eemd(x_data, n_jobs=8):
-    print("⚙️ Starting parallel EEMD processing...")
-    start_time = time.time()
-
-    def safe_process(wave, i):
-        try:
-            return apply_eemd_to_wave(wave.squeeze())
-        except Exception as e:
-            print(f"❌ Error processing sample {i}: {e}")
-            return np.zeros_like(wave.squeeze())  # fallback if needed
-
-    processed = Parallel(n_jobs=n_jobs, backend='loky', verbose=5)(
-        delayed(safe_process)(wave, i) for i, wave in enumerate(x_data)
-    )
-
-    total_time = time.time() - start_time
-    print(f"✅ Done processing {len(x_data)} samples in {total_time:.2f} seconds.")
-    return np.array(processed)  # shape: (samples, 125, 3)
+from joblib import dump, load
 
 class VitalDBDataset:
-    def __init__(self, max_cases=20, srate=128):
-        self.SRATE = srate
+    def __init__(self, num_cases=20, srate=128):
+        self.num_cases = num_cases
+        self.SRATE= srate
         self.SEGLEN = 8 * self.SRATE  # 8-second segments
-        self.MAX_CASES = max_cases
 
         # Train/test data placeholders
         self.x_train, self.x_test = None, None
@@ -61,117 +17,77 @@ class VitalDBDataset:
         self.process_data()
 
     def process_data(self):
-        print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 
-        x,y,b,c= self.load_data()
-        x, b, c = self.remove_invalid_samples(x,b,c)
+        x,y,c= self.load_data()
+        x, y, c = self.remove_invalid_samples(x,y,c)
 
-        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter.joblib")
-        dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/b_data_without_filter.joblib")
+        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_data.joblib")
+        dump(y,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_data.joblib")
 
-        x, b, c= self.remove_excessive_samples(x,b,c)
-
-        x =self.apply_EEMD_filter(x)
-
-        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x.joblib")
-        dump(b, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b.joblib")
-        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c.joblib")
-        print("finished saving EEMD Data")
-
-        print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
-
-
-        self.visualize_imfs(x)
-        self.split_data(x, b, c)
+        self.split_data(x, y, c)
         print("done splitting data")
 
-    def remove_excessive_samples(self, x, b, c):
-        # Step 1: Initialize mask for keeping valid samples
-        keep_mask = np.zeros_like(c, dtype=bool)
-
-        # Step 2: Loop through each case ID and keep only first 3000 samples
-        for case_id in np.unique(c):
-            case_indices = np.where(c == case_id)[0]
-            first_3000 = case_indices[1000:2000]
-            keep_mask[first_3000] = True
-
-        # Step 3: Apply the mask to your data
-        x = x[keep_mask]
-        b = b[keep_mask]
-        c = c[keep_mask]
-
-        return x,b,c
-
-    def apply_EEMD_filter(self, x):
-        x= process_dataset_eemd(x)
-        print(f"✅ Preprocessed shape: {x.shape}")
-
-        # Reshape for scaling: (samples * 125, 3)
-        reshaped = x.reshape(-1, 3)
-
-        scaler = StandardScaler()
-        scaled = scaler.fit_transform(reshaped)
-
-        # Restore shape: (samples, 125, 3)
-        x_scaled = scaled.reshape(x.shape)
-        print(f"✅ Preprocessed shape: {x_scaled.shape}")
-
-        return x_scaled
 
     def load_data(self):
+
         """"Loads and processes EEG and MAC data from VitalDB."""
         df_trks = pd.read_csv("https://api.vitaldb.net/trks")
         df_cases = pd.read_csv("https://api.vitaldb.net/cases")
+        surg_types = df_cases['optype'].unique().tolist()
 
-        EEG, SEVO, BIS = 0, 1, 2  # Data indices
+        SEVO =0
 
         # Select valid case IDs
-        caseids = set(df_cases.loc[df_cases['age'] > 18, 'caseid']) & \
-                  set(df_trks.loc[df_trks['tname'] == 'BIS/EEG1_WAV', 'caseid']) & \
-                  set(df_trks.loc[df_trks['tname'] == 'BIS/BIS', 'caseid']) & \
+        caseids = set(df_cases.loc[df_cases['age'] > 5, 'caseid']) & \
                   set(df_trks.loc[df_trks['tname'] == 'Primus/EXP_SEVO', 'caseid'])
 
-        x, y, b, c = [], [], [], []
+        x, y, c = [], [], []
+        oldlen = len(y)
         icase = 0
+        excluded=0
+
         print("caseids", len(caseids))
 
         for caseid in caseids:
-            if icase >= self.MAX_CASES:
+            if icase >= self.num_cases:
                 break
 
-            print(f'Loading case {caseid} ({icase + 1}/{self.MAX_CASES})...', end='', flush=True)
+            print(f'Loading case {caseid} ({icase + 1}/{self.num_cases})...', end='', flush=True)
 
             # Exclude cases with certain anesthetic agents
             try:
                 if np.any(vitaldb.load_case(caseid, 'Orchestra/PPF20_CE') > 0.2):
                     print('Excluded: Propofol detected')
+                    excluded += 1
                     continue
             except:
                 pass
-
             try:
                 if np.any(vitaldb.load_case(caseid, 'Primus/EXP_DES') > 1):
                     print('Excluded: Desflurane detected')
+                    excluded += 1
                     continue
             except:
                 pass
-
             try:
                 if np.any(vitaldb.load_case(caseid, 'Primus/FEN2O') > 2):
                     print('Excluded: N2O detected')
+                    excluded += 1
                     continue
             except:
                 pass
             try:
                 if np.any(vitaldb.load_case(caseid, 'Orchestra/RFTN50_CE') > 0.2):
                     print('Excluded: Remifentanil detected')
+                    excluded += 1
                     continue
             except:
                 pass
 
-            # Load EEG, Sevoflurane concentration, and BIS data
+                # Load EEG, Sevoflurane concentration, and BIS data
+
             try:
-                vals = vitaldb.load_case(caseid, ['BIS/EEG1_WAV', 'Primus/EXP_SEVO', 'BIS/BIS'], 1 / self.SRATE)
+                vals = vitaldb.load_case(caseid, ['Primus/EXP_SEVO'], 1 / self.SRATE)
             except:
                 print('Failed to load data')
                 continue
@@ -185,148 +101,120 @@ class VitalDBDataset:
                 print('Excluded: All SEVO <= 1')
                 continue
 
-            # Get patient age and adjust Sevoflurane concentration based on age
             age = df_cases.loc[df_cases['caseid'] == caseid, 'age'].values[0]
-            vals[:, SEVO] /= 1.80 * 10 ** (-0.00269 * (age - 40))
+            sex = df_cases.loc[df_cases['caseid'] == caseid, 'sex'].values[0]
+            bmi = df_cases.loc[df_cases['caseid'] == caseid, 'bmi'].values[0]
+            surgery_type= df_cases.loc[df_cases['caseid'] == caseid, 'optype'].values[0]
+            hypertension = df_cases.loc[df_cases['caseid'] == caseid, 'preop_htn'].values[0]
+            diabetes = df_cases.loc[df_cases['caseid'] == caseid, 'preop_dm'].values[0]
+            hb= df_cases.loc[df_cases['caseid'] == caseid, 'preop_hb'].values[0]
 
-            # Check for valid BIS values
-            if not np.any(vals[:, BIS] > 0):
-                print('Excluded: All BIS <= 0')
+            gender   = 1 if sex == 'M' else 0
+            anemia = 1 if hb < 12 else 0
+            surg_onehot = [1 if surgery_type == t else 0 for t in surg_types]
+            case_features = [gender, bmi, *surg_onehot, hypertension, diabetes, anemia]
+
+            #ensures all SEVO values are > 0
+            valid_idx = np.where(vals[:, SEVO] > 0)[0]
+            first_idx = valid_idx[0]
+            last_idx = valid_idx[-1]
+            vals = vals[first_idx:last_idx + 1, :]
+
+            # Ensure data length is at least 5 minutes
+            if len(vals) < 1600 * self.SRATE:
+                print('Excluded: Data length less than 5 min')
+                excluded += 1
                 continue
 
-            # Trim data to valid BIS indices
-            valid_bis_idx = np.where(vals[:, BIS] > 0)[0]
-            first_bis_idx = valid_bis_idx[0]
-            last_bis_idx = valid_bis_idx[-1]
-            vals = vals[first_bis_idx:last_bis_idx + 1, :]
+            # Forward-fill NaNs in the SEVO column only
+            sevo = pd.Series(vals[:, SEVO])
+            sevo = sevo.ffill(limit=5 * self.SRATE)
+            vals[:, SEVO] = sevo.values
 
-            # Ensure data length is at least 30 minutes
-            if len(vals) < 1800 * self.SRATE:
-                print('Excluded: Data length less than 30 min')
-                continue
+            # ——— compute age-adjusted MAC and class label ———
+            MAC_age = 1.80 * 10 ** (-0.00269 * (age - 40))
+            mean_mac = np.nanmean(vals[:, SEVO])
+            low_thr, high_thr = 0.8 * MAC_age, 1.2 * MAC_age
+            if   mean_mac <  low_thr:  mac_class = 0
+            elif mean_mac <= high_thr: mac_class = 1
+            else:                       mac_class = 2
 
-            # Forward fill NaNs in SEVO and BIS columns
-            df_vals = pd.DataFrame(vals[:, SEVO:], columns=['SEVO', 'BIS'])
-            df_vals = df_vals.ffill(limit=5 * self.SRATE)
-            vals[:, SEVO:] = df_vals.values
-
-            oldlen = len(y)
-
-            # Iterate over data to extract segments
             for irow in range(self.SEGLEN, len(vals), self.SRATE):
-                bis = vals[irow, BIS]
-                mac = vals[irow, SEVO]
-                if np.isnan(bis) or np.isnan(mac) or bis == 0:
+                window = vals[irow-self.SEGLEN : irow, SEVO]
+
+                # 1) skip if too short
+                if window.size < self.SEGLEN:
                     continue
 
-                eeg = vals[irow - self.SEGLEN:irow, EEG]
-                if np.isnan(eeg).any():
+                # 2) skip if entirely NaN
+                if not np.any(np.isfinite(window)):
                     continue
-                x.append(eeg)
-                y.append(mac)
-                b.append(bis)
+
+                mean_sevo = np.nanmean(window)
+                std_sevo  = np.nanstd(window)
+
+                sample_features = case_features + [mean_sevo, std_sevo]
+
+                x.append(sample_features)
+                y.append(mac_class)
                 c.append(caseid)
 
+
+            """# extract segments
+            x.append(case_features)
+            y.append(mac_class)
+            c.append(caseid)"""
+
             icase += 1
-            print(f'{len(y) - oldlen} samples read, total {len(y)} samples')
+            print("excluded caseids", excluded)
 
+        print(f'{len(y) - oldlen} samples read, total {len(y)} samples')
+        return x,y,c
 
-        return x,y,b,c
+    def remove_invalid_samples(self, x, y, c):
 
-    def remove_invalid_samples(self, x_og, b_og, c_og, chunk_size=10000, threshold=100):
         """
         Converts lists to NumPy arrays and removes invalid samples.
-        Now processes data in chunks to avoid memory overload and helps debug outliers.
+        Processes data in chunks to avoid memory overload and helps debug outliers.
         """
 
-        x_masked = np.array(x_og, dtype=np.float32)
-        del x_og
-        b_masked = np.array(b_og, dtype=np.float32)
-        del b_og
-        c_masked = np.array(c_og, dtype=np.float32)
-        del c_og
-        import gc
-        gc.collect()
+        x_masked = np.array(x, dtype=np.float32)
+        y_masked = np.array(y, dtype=np.float32)
+        c_masked = np.array(c, dtype=np.float32)
 
-        # Initialize outlier counter
-        outliers = 0
-        valid_mask = np.ones(x_masked.shape[0], dtype=bool)  # Start with all samples being valid
-
-        # Process data in chunks to avoid memory overload
-        total_rows = x_masked.shape[0]
-        for i in range(0, total_rows, chunk_size):
-            chunk = x_masked[i:i+chunk_size]
-            # Check for NaN values in this chunk
-            valid_mask_chunk = ~np.isnan(chunk).any(axis=1)
-
-            # Apply the first condition: (max - min) > 12 for the current chunk
-            valid_mask_chunk &= (np.nanmax(chunk, axis=1) - np.nanmin(chunk, axis=1) > 12)
-
-            # Check for outliers: absolute values beyond the threshold
-            abs_max = np.nanmax(np.abs(chunk), axis=1)
-            outliers_in_chunk = np.sum(abs_max > threshold)
-            outliers += outliers_in_chunk
-
-            # Apply the third condition: (max absolute value) < threshold for the current chunk
-            valid_mask_chunk &= (abs_max < threshold)
-
-            # Update the overall valid mask
-            valid_mask[i:i+chunk_size] = valid_mask_chunk
-
-            # Debugging prints for the first few chunks
-            if i < 50000:  # Limit prints to first few chunks
-                print(f"Chunk {i}-{i+chunk_size-1}: Found {outliers_in_chunk} outliers, valid mask size: {valid_mask_chunk.sum()}")
+        # Build a single mask for "no NaNs in any feature"
+        valid_mask = ~np.isnan(x_masked).any(axis=(1))
 
 
-        print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
+        # Apply it
+        x_clean = x_masked[valid_mask]
+        y_clean = y_masked[valid_mask]
+        c_clean = c_masked[valid_mask]
 
-        # Apply the valid mask to exclude invalid samples
-        x = x_masked[np.where(valid_mask)]
-        b = b_masked[np.where(valid_mask)]
-        c = c_masked[np.where(valid_mask)]
+        print(f"{100 * (1 - np.mean(valid_mask)):.1f}% samples removed (had NaNs)")
+        return x_clean, y_clean, c_clean
 
-        print(f"Total outliers found: {outliers}")
-        print(f'{100 * (1 - np.mean(valid_mask)):.1f}% samples removed')
 
-        return x, b, c
-
-    def split_data(self, x, b, c):
+    def split_data(self, x, y, c):
 
         caseids = np.unique(c)
-        ntest = max(1, int(len(caseids) * 0.3))
-        caseids_train, caseids_test = caseids[ntest:], caseids[:ntest]
+        np.random.seed(42)
+        np.random.shuffle(caseids)
+        n_test = max(1, int(len(caseids) * 0.3))
+        caseids_test, caseids_train = caseids[:n_test], caseids[n_test:]
 
-        train_mask, test_mask = np.isin(c, caseids_train), np.isin(c, caseids_test)
-        self.x_train, self.x_test = x[train_mask].reshape(-1, self.SEGLEN, 3), x[test_mask].reshape(-1, self.SEGLEN, 3)
-        self.y_train, self.y_test = b[train_mask], b[test_mask]
+        train_mask = np.isin(c, caseids_train)
+        test_mask  = np.isin(c, caseids_test)
+
+        self.x_train, self.x_test = x[train_mask], x[test_mask]
+        self.y_train, self.y_test = y[train_mask], y[test_mask]
         self.c_train, self.c_test= c[train_mask], c[test_mask]
 
         print('====================================================')
-        print(f'Total: {len(caseids)} cases, {len(b)} samples')
+        print(f'Total: {len(caseids)} cases, {len(y)} samples')
         print(f'Train: {len(np.unique(c[train_mask]))} cases, {len(self.y_train)} samples')
         print(f'Train cases: {len(caseids_train)}, Test cases: {len(caseids_test)}')
         print("shape of x_train", self.x_train.shape)
         print("shape of x_test", self.x_test.shape)
         print('====================================================')
-
-    def visualize_imfs(self, x_data):
-        """
-        Visualizes the 3-channel IMF-decomposed EEG signal for a single sample.
-        Assumes x_data shape is (samples, 125, 3), where the last axis corresponds to IMF 1, 2, 3.
-        """
-        # Take the first sample: shape (125, 3)
-        sample_wave = x_data[0]
-
-        # Number of IMFs
-        n_imfs = sample_wave.shape[-1]
-
-        # Plot each IMF
-        plt.figure(figsize=(12, 2 * n_imfs))
-        for i in range(n_imfs):
-            plt.subplot(n_imfs, 1, i + 1)
-            plt.plot(sample_wave[:, i])
-            plt.title(f"IMF {i + 1} (Channel {i + 1})")
-
-        plt.tight_layout()
-        plt.show()
 
