@@ -324,6 +324,7 @@ X_res= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_smote_pre
 y_res= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_smote_preop.joblib")
 
 models = {
+
     'Logistic Regression': LogisticRegression(random_state=42),
     'Ridge Classifier': RidgeClassifier(),
     'MLP Classifier': MLPClassifier(random_state=42, max_iter=300),
@@ -331,59 +332,7 @@ models = {
     'Extra Trees': ExtraTreesClassifier(random_state=42),
     'Decision Trees': DecisionTreeClassifier(random_state=42),
     'SVC': SVC(random_state=42, probability=True),
-    'K-Nearest Neighbors': KNeighborsClassifier(),
-
-    """XGB": XGBClassifier(
-        n_estimators=200, learning_rate=0.1,
-        max_depth=4, random_state=42, use_label_encoder=False,
-        eval_metric="mlogloss"
-    ),
-    "CalibratedSVC": CalibratedClassifierCV(LinearSVC(max_iter=5000), cv=3),
-    "LightGBM": LGBMClassifier(
-        n_estimators=200,
-        learning_rate=0.1,
-        max_depth=  4,
-        random_state=42
-    ),
-    "CatBoost": CatBoostClassifier(
-        iterations=200,
-        learning_rate=0.1,
-        depth=6,
-        random_seed=42,
-        verbose=False
-    ),
-    "CBWeighted":CatBoostClassifier(
-        iterations=200,
-        auto_class_weights="Balanced",
-        random_seed=42,
-        verbose=False
-    ),
-    "LGBMWeighed": LGBMClassifier(
-        n_estimators=200,
-        class_weight="balanced",
-        random_state=42,
-        verbose=-1
-    ),
-    
-    "BalancedBagging": BalancedBaggingClassifier(
-        estimator=DecisionTreeClassifier(max_depth=6),
-        sampling_strategy="auto",
-        n_estimators=10,        # ↓ fewer trees
-        max_samples=0.5,        # ↓ each bag trains on only 50% of data
-        replacement=True,       # bootstrap with replacement often faster
-        random_state=42,
-        n_jobs=1                # ↑ use just one core to avoid oversubscription
-    ),
-    "RandomForestBalanced": RandomForestClassifier(
-        n_estimators=200,
-        max_depth=6,
-        class_weight="balanced",
-        random_state=42,
-        n_jobs=-1
-    ),
-    "LDA": LinearDiscriminantAnalysis(),
-    "GNB": GaussianNB()"""
-
+    'K-Nearest Neighbors': KNeighborsClassifier()
 }
 
 # Compare model metrics with a great table
