@@ -108,11 +108,21 @@ class VitalDBDataset:
             hypertension = df_cases.loc[df_cases['caseid'] == caseid, 'preop_htn'].values[0]
             diabetes = df_cases.loc[df_cases['caseid'] == caseid, 'preop_dm'].values[0]
             hb= df_cases.loc[df_cases['caseid'] == caseid, 'preop_hb'].values[0]
+            ph= df_cases.loc[df_cases['caseid'] == caseid, 'preop_ph'].values[0]
+            creatine= df_cases.loc[df_cases['caseid'] == caseid, 'preop_cr'].values[0]
+            gpt= df_cases.loc[df_cases['caseid'] == caseid, 'preop_alt'].values[0]
+            oxygen= df_cases.loc[df_cases['caseid'] == caseid, 'preop_pao2'].values[0]
+            carbon_dioxide= df_cases.loc[df_cases['caseid'] == caseid, 'preop_paco2'].values[0]
+
+            if np.isnan([ph, creatine, gpt, oxygen, carbon_dioxide]).any():
+                print('Excluded: missing preop lab values')
+                excluded += 1
+                continue
 
             gender   = 1 if sex == 'M' else 0
             anemia = 1 if hb < 12 else 0
             surg_onehot = [1 if surgery_type == t else 0 for t in surg_types]
-            case_features = [gender, bmi, *surg_onehot, hypertension, diabetes, anemia]
+            case_features = [gender, bmi, *surg_onehot, hypertension, diabetes, anemia, ph, creatine, gpt, oxygen, carbon_dioxide]
 
             #ensures all SEVO values are > 0
             valid_idx = np.where(vals[:, SEVO] > 0)[0]
@@ -121,7 +131,7 @@ class VitalDBDataset:
             vals = vals[first_idx:last_idx + 1, :]
 
             # Ensure data length is at least 5 minutes
-            if len(vals) < 1600 * self.SRATE:
+            if len(vals) < 300 * self.SRATE:
                 print('Excluded: Data length less than 5 min')
                 excluded += 1
                 continue
@@ -140,30 +150,12 @@ class VitalDBDataset:
             else:                       mac_class = 2
 
             for irow in range(self.SEGLEN, len(vals), self.SRATE):
-                window = vals[irow-self.SEGLEN : irow, SEVO]
-
-                # 1) skip if too short
-                if window.size < self.SEGLEN:
+                window = vals[irow-self.SEGLEN:irow, SEVO]
+                if window.size < self.SEGLEN or not np.isfinite(window).any():
                     continue
-
-                # 2) skip if entirely NaN
-                if not np.any(np.isfinite(window)):
-                    continue
-
-                mean_sevo = np.nanmean(window)
-                std_sevo  = np.nanstd(window)
-
-                sample_features = case_features + [mean_sevo, std_sevo]
-
-                x.append(sample_features)
+                x.append(case_features)
                 y.append(mac_class)
                 c.append(caseid)
-
-
-            """# extract segments
-            x.append(case_features)
-            y.append(mac_class)
-            c.append(caseid)"""
 
             icase += 1
             print("excluded caseids", excluded)

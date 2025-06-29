@@ -258,7 +258,7 @@ def plot_confusion_matrix(y_true, y_pred, model_name):
     plt.title(f"Confusion Matrix for {model_name}")
     plt.show()
 
-"""dataset= VitalDBDataset(num_cases=750)
+dataset= VitalDBDataset(num_cases=750)
 
 x_train= dataset.x_train
 x_test= dataset.x_test
@@ -271,31 +271,30 @@ dump(x_test, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_test_pre
 dump(y_train, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_train_preop.joblib")
 dump(y_test, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_test_preop.joblib")
 dump(c_train, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/c_train_preop.joblib")
-dump(c_test, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/c_test_preop.joblib")"""
+dump(c_test, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/c_test_preop.joblib")
 
 
-x_train= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_train_preop.joblib")
+"""x_train= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_train_preop.joblib")
 x_test = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_test_preop.joblib")
 y_train= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_train_preop.joblib")
-y_test = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_test_preop.joblib")
+y_test = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_test_preop.joblib")"""
 
 print("x_train shape:", x_train.shape)
 print("x_test shape:", x_test.shape)
 
-#visualize_data(x_train, y_train)
+visualize_data(x_train, y_train)
 
 # Define full feature names
-static_cols = ["gender", "bmi", "htn", "dm", "anemia"]
+static_cols = ["gender", "bmi", "htn", "dm", "anemia", "ph", "creatinine", "gpt", "paO2", "paCO2"]
 surg_cols   = [
     "op_Biliary/Pancreas", "op_Breast", "op_Colorectal", "op_Hepatic",
     "op_Major resection", "op_Minor resection", "op_Others", "op_Stomach",
     "op_Thyroid", "op_Transplantation", "op_Vascular"
 ]
 
-dynamic_cols = ["mean_sevo","std_sevo"]
-all_cols = static_cols + surg_cols + dynamic_cols
+all_cols = static_cols + surg_cols
 
-numeric_feats   = ["bmi"] + dynamic_cols
+numeric_feats  = ["bmi", "ph", "creatinine", "gpt", "paO2", "paCO2"]
 categorical_feats = ["gender","htn","dm","anemia"] + surg_cols
 
 # Build preprocessor
@@ -311,17 +310,17 @@ df_test  = pd.DataFrame(x_test,  columns=all_cols)
 X_train_proc = preprocessor.fit_transform(df_train)
 X_test_proc  = preprocessor.transform(df_test)
 
-""""# SMOTE which over-samples the training set
+# SMOTE which over-samples the training set
 print(f"Original training dataset shape: {Counter(y_train)}")
 smote = SMOTE(random_state=42)
 X_res, y_res = smote.fit_resample(X_train_proc, y_train)
 print(f"Resampled training dataset shape: {Counter(y_res)}")
 
 dump(X_res, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_smote_preop.joblib")
-dump(y_res, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_smote_preop.joblib")"""
+dump(y_res, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_smote_preop.joblib")
 
-X_res= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_smote_preop.joblib")
-y_res= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_smote_preop.joblib")
+"""X_res= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_smote_preop.joblib")
+y_res= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_smote_preop.joblib")"""
 
 models = {
 
