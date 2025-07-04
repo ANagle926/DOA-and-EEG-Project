@@ -2,8 +2,7 @@ from collections import Counter
 
 import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
-from imblearn.ensemble import BalancedBaggingClassifier, BalancedRandomForestClassifier
+from imblearn.ensemble import BalancedBaggingClassifier
 from imblearn.over_sampling import SMOTE
 from joblib import load, dump
 from matplotlib import pyplot as plt
@@ -15,10 +14,6 @@ from sklearn.metrics import classification_report, confusion_matrix, ConfusionMa
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
-from imblearn.combine import SMOTEENN
-from imblearn.ensemble import BalancedRandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import fbeta_score
 
 """x_test = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_test_preop.joblib")
 y_test = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_test_preop.joblib")
@@ -71,7 +66,26 @@ X_res= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/x_smote_pre
 y_res= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_smote_preop.joblib")
 y_test = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_test_preop.joblib")
 
+"""ensemble = VotingClassifier(
+    estimators=[
+        ('bb',  BalancedBaggingClassifier(estimator=DecisionTreeClassifier(max_depth=6), sampling_strategy="auto", n_estimators=10,max_samples=0.5, replacement=True, random_state=42, n_jobs=-1)),
+        ('xgb',  XGBClassifier(n_estimators=200, learning_rate=0.1, max_depth=4, random_state=42, use_label_encoder=False, eval_metric="mlogloss")),
+        ('dt',  DecisionTreeClassifier(random_state=42))
+    ],
+    voting='soft',
+    weights=[1.7, 1, 1],  # you can increase the weight of the model that does best on class 1
+    n_jobs=-1
+)"""
 
+"""stack = StackingClassifier(
+    estimators=[
+        ('xgb',  XGBClassifier(n_estimators=200, learning_rate=0.1, max_depth=4, random_state=42, use_label_encoder=False, eval_metric="mlogloss")),
+        ('dt',  DecisionTreeClassifier(random_state=42))
+    ],
+    final_estimator=BalancedBaggingClassifier(estimator=DecisionTreeClassifier(max_depth=6), sampling_strategy="auto", n_estimators=10,max_samples=0.5, replacement=True, random_state=42, n_jobs=-1),
+    cv=5,
+    n_jobs=-1
+)"""
 
 bb = BalancedBaggingClassifier(
     estimator=DecisionTreeClassifier(max_depth=None, class_weight='balanced'),
@@ -92,13 +106,15 @@ dt = DecisionTreeClassifier(max_depth=None,
                             class_weight='balanced',   # <-- magic flag
                             random_state=42)
 
-meta = LogisticRegression(max_iter=10_000, class_weight="balanced")
-
 stack = StackingClassifier(
-    estimators=[('xgb', xgb), ('dt', dt), ('bb', bb)],
-    final_estimator=meta,
-    stack_method='predict_proba',   # ← important
-    passthrough=True,
+    estimators=[
+        ('xgb',  xgb),
+        ('dt', dt),
+        ('bb', bb)
+    ],
+    final_estimator=LogisticRegression(max_iter=10_000, class_weight="balanced"), #make this xgb?
+    #make final estimator minority sensitive: BalancedRandomForestClassifie, LightGBM, CatBoost
+    stack_method="predict_proba",
     cv=5,
     n_jobs=-1
 )
@@ -111,46 +127,27 @@ X_fit, _, y_fit, _ = train_test_split(
     random_state=42
 )
 
-print(X_fit.shape)
 
-#smote = SMOTE(random_state=42)
-#X_fit, y_fit = smote.fit_resample(X_fit, y_fit)
-X_fit, y_fit = SMOTEENN(random_state=42).fit_resample(X_fit, y_fit)
+print(X_res.shape)
+
+smote = SMOTE(random_state=42)
+X_fit, y_fit = smote.fit_resample(X_fit, y_fit)
 print(f"Resampled training dataset shape: {Counter(y_fit)}")
 
 stack.fit(X_fit, y_fit)
-proba_val = stack.predict_proba(X_test_proc)
 
-
-best_t = {0: 0.5, 2: 0.5}        # start‐values
-for cls in [0, 2]:
-    best_f1 = 0
-    for t in np.linspace(0.05, 0.50, 20):        # 5 % → 50 %
-        preds = proba_val.argmax(1)              # baseline = highest prob
-        mask  = proba_val[:, cls] >= t           # override if above thresh
-        preds[mask] = cls
-        f1 = fbeta_score(y_test, preds, average=None, beta=1)[cls]
-        if f1 > best_f1:
-            best_f1, best_t[cls] = f1, t
-    print(f"class {cls}:  best-F1 = {best_f1:.3f} at threshold {best_t[cls]:.2f}")
-
-proba_test = stack.predict_proba(X_test_proc)
-
-# start with arg-max
-y_pred_stack = proba_test.argmax(1)
-
-# override in order: High first, then Low
-high_mask = proba_test[:, 2] >= best_t[2]
-low_mask  = proba_test[:, 0] >= best_t[0]
-
-y_pred_stack[high_mask] = 2
-y_pred_stack[low_mask & ~high_mask] = 0     # don’t overwrite High decisions
-
+y_proba_stack = stack.predict_proba(X_test_proc)
+thresh_stack = 0.1  # lower or higher to bias recall/precision
+y_pred_stack = np.where(y_proba_stack[:,1] >= thresh_stack, 1, np.argmax(y_proba_stack[:, [0,2]], axis=1) * 2)
 
 print(classification_report(y_test, y_pred_stack,    digits=4))
+
 cm = confusion_matrix(y_test, y_pred_stack, labels=[0, 1, 2])   # order the labels as you like
 
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Low', 'Normal', 'High'])
+# ── 2. plot it ───────────────────────────────────────────────────────────
+disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                              display_labels=['Low', 'Normal', 'High'])
+
 fig, ax = plt.subplots(figsize=(6, 6))
 disp.plot(ax=ax, cmap='Blues', colorbar=True, values_format='d')  # any Matplotlib colormap works
 ax.set_title("Confusion Matrix")
