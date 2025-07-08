@@ -42,7 +42,7 @@ def low_error_probe(X_proc, y_test, y_pred, feat_names,
     X_tr, X_va = X_low[tr_idx], X_low[va_idx]
     y_tr, y_va = y_err_low[tr_idx], y_err_low[va_idx]
 
-    # --- 3. drop both gender dummies to avoid guaranteed leaks -----
+    ## --- 3. drop both gender dummies to avoid guaranteed leaks -----
     gender_cols = [i for i, n in enumerate(feat_names)
                    if n.startswith("cat__gender_")]
     keep_mask   = ~np.isin(np.arange(X_tr.shape[1]), gender_cols)
@@ -62,7 +62,12 @@ def low_error_probe(X_proc, y_test, y_pred, feat_names,
     print(classification_report(y_va, logi.predict(X_va)))
     print("1-node stump accuracy:", stump.score(X_va, y_va))
 
-    # --- 5. top correlations --------------------------------------
+    df_low = pd.DataFrame(X_test_proc[y_test == 0], columns=feat_names)
+    df_low["err"] = (y_pred[y_test == 0] == 1).astype(int)
+    #print(pd.crosstab(df_low["num__gender"], df_low["err"],
+    #                  rownames=["gender"], colnames=["Low→Normal error?"]))
+
+# --- 5. top correlations --------------------------------------
     df_tr  = pd.DataFrame(X_tr, columns=feat_keep)
     corr   = df_tr.corrwith(pd.Series(y_tr, name="err")).abs()
     print("\nTop features driving Low→Normal errors:")
@@ -98,9 +103,20 @@ def high_error_probe(X_proc, y_test, y_pred, feat_names):
     stump = DecisionTreeClassifier(max_depth=1).fit(X_tr, y_tr)
     print("stump acc:", stump.score(X_va, y_va))
 
+def apply_thresholds(proba: np.ndarray, tau_low: float = 0.40, tau_high: float = 0.10):
+    """Convert 3‑class probability matrix → integer labels.
+    Priority: High first, then Low, else Normal.
+    """
+    pred = np.full(proba.shape[0], 1, dtype=int)  # default Normal
+    high_mask = proba[:, 2] >= tau_high
+    low_mask  = (proba[:, 0] >= tau_low) & (~high_mask)
+    pred[high_mask] = 2
+    pred[low_mask]  = 0
+    return pred
+
 def train_stacked_model(x_train, x_test, y_train, y_test):
 
-    bb = BalancedBaggingClassifier(
+    """bb = BalancedBaggingClassifier(
         estimator=DecisionTreeClassifier(max_depth=None, class_weight='balanced'),
         n_estimators=500,
         max_samples=1.0,      # each tree sees *all* classes
@@ -124,44 +140,103 @@ def train_stacked_model(x_train, x_test, y_train, y_test):
             ('dt', dt),
             ('bb', bb)
         ],
-        final_estimator=LogisticRegression(max_iter=10_000, class_weight="balanced"),
+        final_estimator=LogisticRegression(max_iter=10_000, class_weight={0:5, 1:1, 2:5}),
         stack_method="predict_proba",
         cv=5,
         n_jobs=-1
     )
     print("fitting")
     stack.fit(x_train, y_train)
-    print("predicting")
-    y_proba_stack = stack.predict_proba(x_test)
+    print("predicting")"""
+    penalty_cols = {"num__gender": 0.1,  # ← 50× penalty versus default 1.0
+                    "num__bmi":    0.1,
+                    "num__ph":     0.1}
+    feature_weights = np.ones(len(feat_names))
+    for col, w in penalty_cols.items():
+        idx = np.where(feat_names == col)[0]
+        if idx.size:
+            feature_weights[idx[0]] = w
 
+    # ————————————————————————————
+    # 2)  Base learners with feature sub-sampling for trees
+    # ————————————————————————————
+    TREE_FRAC = 0.8  # 0.75
 
-    high_thresh = 0.25
-    low_thresh  = 0.25
+    dt = DecisionTreeClassifier(max_depth=None,
+                                class_weight="balanced",
+                                max_features=TREE_FRAC,
+                                random_state=42)
 
-    # start everyone as Normal
-    y_pred_stack = np.full_like(y_test, 1)
+    bb = BalancedBaggingClassifier(
+        estimator=DecisionTreeClassifier(max_depth=None,
+                                         class_weight="balanced",
+                                         max_features=TREE_FRAC),
+        n_estimators=500,
+        max_samples=1.0,
+        bootstrap=False,            # avoid duplicates
+        bootstrap_features=True,    # sub-sample features per estimator
+        max_features=TREE_FRAC,
+        random_state=42,
+        n_jobs=1,
+    )
 
-    # 1️⃣  pull out Highs first (so they stay High even if Low prob is high)
-    y_pred_stack[y_proba_stack[:, 2] >= high_thresh] = 2
+    xgb = XGBClassifier(
+        n_estimators=600,
+        max_depth=6,
+        min_child_weight=10,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        colsample_bynode=TREE_FRAC,   # weight vector honoured only if < 1.0
+        feature_weights=feature_weights,
+        eval_metric="mlogloss",
+        random_state=42,
+    )
 
-    # 2️⃣  among the remaining rows, label Low if confident enough
-    low_mask = (y_pred_stack == 1) & (y_proba_stack[:, 0] >= low_thresh)
-    y_pred_stack[low_mask] = 0
+    # ————————————————————————————
+    # 3)  Sparse logistic head + class weights
+    # ————————————————————————————
+    final_logi = LogisticRegression(
+        penalty="l1",
+        C=0.05,                   # stronger shrinkage than v1
+        class_weight={0:8, 1:1, 2:8},
+        solver="liblinear",
+        max_iter=10_000,
+    )
 
+    stack = StackingClassifier(
+        estimators=[("xgb", xgb), ("dt", dt), ("bb", bb)],
+        final_estimator=final_logi,
+        stack_method="predict_proba",
+        cv=5,
+        n_jobs=-1,
+    )
+    #stack= load("model_v4.joblib")
 
-    print(classification_report(y_test, y_pred_stack, digits=4))
+    print("Fitting stack …")
+    stack.fit(x_train, y_train)
+    print("Predicting probabilities …")
+    y_proba = stack.predict_proba(x_test)
 
-    cm = confusion_matrix(y_test, y_pred_stack, labels=[0, 1, 2])   # order the labels as you like
+    TAU_HIGH = 0.3   # keep High sensitivity
+    TAU_LOW  = 0.10   # tuned on val set
 
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm,
-                                  display_labels=['Low', 'Normal', 'High'])
+    pred = np.full_like(y_test, 1)          # default Normal
+    high = y_proba[:, 2] >= TAU_HIGH
+    low  = (y_proba[:, 0] >= TAU_LOW) & (~high)
+    pred[high] = 2
+    pred[low]  = 0
+
+    print("\nClassification report (test set):")
+    print(classification_report(y_test, pred, digits=4))
+
+    cm = confusion_matrix(y_test, pred, labels=[0, 1, 2])
     fig, ax = plt.subplots(figsize=(6, 6))
-    disp.plot(ax=ax, cmap='Blues', colorbar=True, values_format='d')  # any Matplotlib colormap works
-    ax.set_title("Confusion Matrix")
-    plt.tight_layout()
-    plt.show()
+    ConfusionMatrixDisplay(cm, display_labels=["Low", "Normal", "High"]).plot(ax=ax, cmap="Blues", values_format="d")
+    ax.set_title("Confusion Matrix – Test Set")
+    plt.tight_layout(); plt.show()
 
-    return y_pred_stack, stack
+    return y_pred, stack
 
 def top_features(feat_names, sh_values, cls=1, k=15):
 
@@ -194,9 +269,6 @@ def process_data():
     df_train = pd.DataFrame(x_train, columns=all_cols)
     df_test  = pd.DataFrame(x_test,  columns=all_cols)
 
-    #  ── HIGH-MAC helper flag ------------------------------------------------
-    #df_train["no_major_resection"] = (df_train["op_Major resection"] == 0).astype(int)
-    #df_test ["no_major_resection"] = (df_test ["op_Major resection"] == 0).astype(int)
 
     #  ── LOW-MAC helper numeric & binary flags ------------------------------
     df_train["mac_fraction_low"] = (df_train["paO2"] < 0.8).astype(int)  # <- use real MAC var if you have it
@@ -226,23 +298,13 @@ def process_data():
 
     flag_cols = [
         "bmi_obese", "creatinine_high", "ph_alkalotic", "htn_creat_flag",
-        #"no_major_resection",
         "mac_fraction_low", "bmi_under_18", "ph_acidotic"
     ]
 
-    numeric_feats = ["gender", "bmi", "ph", "creatinine", "gpt",
+    numeric_feats = ["gender", "bmi", "ph", "creatinine", "gpt", #removed gender
                      "paO2", "paCO2"] + flag_cols
 
-    categorical_feats = [
-        "htn",
-        "dm", "anemia",
-        #"gender",
-        #"op_Major resection",
-        #"op_Minor resection",
-        #"op_Biliary/Pancreas", "op_Breast", "op_Colorectal",
-        #"op_Hepatic", "op_Others", "op_Stomach", "op_Thyroid",
-        #"op_Transplantation", "op_Vascular"
-    ]
+    categorical_feats = ["htn", "dm", "anemia"]
 
     # Build preprocessor
     preprocessor = ColumnTransformer([
@@ -262,7 +324,7 @@ def process_data():
 
     train_idx, _ = train_test_split(
         np.arange(len(y_train)),
-        train_size=40_000,
+        train_size=100_000,
         stratify=y_train,
         random_state=42
     )
@@ -298,27 +360,31 @@ def process_data():
     X_res, y_res = smote.fit_resample(X_small, y_small)
     print("After targeted SMOTE:", Counter(y_res))
 
-    return X_res, X_test_proc, y_res, y_test, feat_names
+    return X_res, X_test_proc, y_res, y_test, feat_names, df_test
 
 
-X_res, X_test_proc, y_res, y_test, feat_names=process_data()
+"""X_res, X_test_proc, y_res, y_test, feat_names, df_test =process_data()
 
 dump(X_res, "x_res_v4.joblib")
 dump(X_test_proc, "x_test_proc_v4.joblib")
 dump(y_res, "y_res_v4.joblib")
 dump(y_test, "y_test_v4.joblib")
 dump(feat_names, "feat_names_v4.joblib")
-print("finished saving data")
+dump(df_test, "df_test_v4.joblib")
+print("finished saving data")"""
+
+X_test_proc= load("x_test_proc_v4.joblib")
+y_test = load("y_test_v4.joblib")
+y_pred= load("y_pred_v4.joblib")
+X_res= load("x_res_v4.joblib")
+y_res= load("y_res_v4.joblib")
+feat_names= load("feat_names_v4.joblib")
 
 y_pred, stack = train_stacked_model(X_res, X_test_proc, y_res, y_test)
 dump(stack, "model_v4.joblib")
 dump(y_pred, "y_pred_v4.joblib")
 
-#X_test_proc= load("x_test_proc_v4.joblib")
-#y_test = load("y_test_v4.joblib")
-#y_pred= load("y_pred_v4.joblib")
-#stack= load("model_v4.joblib")
-#feat_names= load("feat_names_v4.joblib")
+
 
 high_error_probe(X_test_proc, y_test, y_pred, feat_names)
 low_error_probe(X_test_proc, y_test, y_pred, feat_names)
