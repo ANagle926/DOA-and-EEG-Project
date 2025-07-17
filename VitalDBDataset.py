@@ -4,10 +4,11 @@ import vitaldb
 from joblib import dump, load
 
 class VitalDBDataset:
-    def __init__(self, num_cases=20, srate=128):
+    def __init__(self, num_cases=20, srate=128, threshold_def=0.2):
         self.num_cases = num_cases
         self.SRATE= srate
         self.SEGLEN = 8 * self.SRATE  # 8-second segments
+        self.threshold_def= threshold_def
 
         # Train/test data placeholders
         self.x_train, self.x_test = None, None
@@ -47,6 +48,10 @@ class VitalDBDataset:
         excluded=0
 
         print("caseids", len(caseids))
+        missing_counts = {name: 0 for name in ['age', 'sex', 'bmi', 'surgery_type',
+                                               'hypertension', 'diabetes',
+                                               'creatine', 'gpt']}
+
 
         for caseid in caseids:
             if icase >= self.num_cases:
@@ -108,21 +113,35 @@ class VitalDBDataset:
             hypertension = df_cases.loc[df_cases['caseid'] == caseid, 'preop_htn'].values[0]
             diabetes = df_cases.loc[df_cases['caseid'] == caseid, 'preop_dm'].values[0]
             hb= df_cases.loc[df_cases['caseid'] == caseid, 'preop_hb'].values[0]
-            ph= df_cases.loc[df_cases['caseid'] == caseid, 'preop_ph'].values[0]
+            #ph= df_cases.loc[df_cases['caseid'] == caseid, 'preop_ph'].values[0]
             creatine= df_cases.loc[df_cases['caseid'] == caseid, 'preop_cr'].values[0]
             gpt= df_cases.loc[df_cases['caseid'] == caseid, 'preop_alt'].values[0]
-            oxygen= df_cases.loc[df_cases['caseid'] == caseid, 'preop_pao2'].values[0]
-            carbon_dioxide= df_cases.loc[df_cases['caseid'] == caseid, 'preop_paco2'].values[0]
+            #oxygen= df_cases.loc[df_cases['caseid'] == caseid, 'preop_pao2'].values[0]
+            #carbon_dioxide= df_cases.loc[df_cases['caseid'] == caseid, 'preop_paco2'].values[0]
 
-            if np.isnan([ph, creatine, gpt, oxygen, carbon_dioxide]).any():
-                print('Excluded: missing preop lab values')
+            #if np.isnan([age, sex, bmi, surgery_type, hypertension, diabetes, ph, creatine, gpt, oxygen, carbon_dioxide]).any():
+            #    print('Excluded: missing preop lab values')
+            #    excluded += 1
+            #    continue
+            # Put the variables and their labels side-by-side
+            preop_vals  = [age, sex, bmi, surgery_type, hypertension,
+                           diabetes, creatine, gpt]
+            preop_names = list(missing_counts.keys())
+
+            missing = [name for name, val in zip(preop_names, preop_vals)
+                       if val is None or (isinstance(val, float) and np.isnan(val))]
+
+            if missing:
+                print(f"Excluded: missing {', '.join(missing)}")
+                for name in missing:
+                    missing_counts[name] += 1
                 excluded += 1
                 continue
 
             gender   = 1 if sex == 'M' else 0
             anemia = 1 if hb < 12 else 0
             surg_onehot = [1 if surgery_type == t else 0 for t in surg_types]
-            case_features = [gender, bmi, *surg_onehot, hypertension, diabetes, anemia, ph, creatine, gpt, oxygen, carbon_dioxide]
+            case_features = [gender, bmi, *surg_onehot, hypertension, diabetes, anemia, creatine, gpt]
 
             #ensures all SEVO values are > 0
             valid_idx = np.where(vals[:, SEVO] > 0)[0]
@@ -144,23 +163,23 @@ class VitalDBDataset:
             # ——— compute age-adjusted MAC and class label ———
             MAC_age = 1.80 * 10 ** (-0.00269 * (age - 40))
             mean_mac = np.nanmean(vals[:, SEVO])
-            low_thr, high_thr = 0.8 * MAC_age, 1.2 * MAC_age
+            low_thr, high_thr = (1-self.threshold_def) * MAC_age, (1+self.threshold_def) * MAC_age
             if   mean_mac <  low_thr:  mac_class = 0
             elif mean_mac <= high_thr: mac_class = 1
             else:                       mac_class = 2
 
-            for irow in range(self.SEGLEN, len(vals), self.SRATE):
-                window = vals[irow-self.SEGLEN:irow, SEVO]
-                if window.size < self.SEGLEN or not np.isfinite(window).any():
-                    continue
-                x.append(case_features)
-                y.append(mac_class)
-                c.append(caseid)
+            x.append(case_features)
+            y.append(mac_class)
+            c.append(caseid)
 
             icase += 1
             print("excluded caseids", excluded)
 
         print(f'{len(y) - oldlen} samples read, total {len(y)} samples')
+        print("\nMissing Value Summary:")
+        for key, count in missing_counts.items():
+            if count > 0:
+                print(f"{key}: {count} exclusions")
         return x,y,c
 
     def remove_invalid_samples(self, x, y, c):
@@ -192,7 +211,7 @@ class VitalDBDataset:
         caseids = np.unique(c)
         np.random.seed(42)
         np.random.shuffle(caseids)
-        n_test = max(1, int(len(caseids) * 0.3))
+        n_test = max(1, int(len(caseids) * 0.3)) #70/30 validation split
         caseids_test, caseids_train = caseids[:n_test], caseids[n_test:]
 
         train_mask = np.isin(c, caseids_train)
