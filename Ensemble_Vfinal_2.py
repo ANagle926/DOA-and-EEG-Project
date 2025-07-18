@@ -27,24 +27,31 @@ from imblearn.pipeline               import Pipeline as ImbPipeline
 import os, random
 import numpy as np
 import torch
+from tensorflow.python.layers.core import dropout
 
-# — Make Python hash seed stable
 os.environ['PYTHONHASHSEED']     = '42'
-# — Force single‑threaded BLAS / OpenMP / MKL
+random.seed(42)
+np.random.seed(42)
+
+# 1b) Single‑thread your linear‑algebra libs
 os.environ['OMP_NUM_THREADS']     = '1'
 os.environ['OPENBLAS_NUM_THREADS']='1'
 os.environ['MKL_NUM_THREADS']     = '1'
 os.environ['NUMEXPR_NUM_THREADS'] = '1'
 
-# — Seed Python, NumPy, Torch
-random.seed(42)
-np.random.seed(42)
+# 1c) Torch RNG
 torch.manual_seed(42)
 torch.cuda.manual_seed_all(42)
 
-# — Enforce deterministic PyTorch CUDA ops
+# 1d) Force deterministic backends
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark     = False
+try:
+    torch.use_deterministic_algorithms(True)
+except:
+    pass
+
+
 
 def process_data(x_train, x_test):
 
@@ -58,21 +65,30 @@ def process_data(x_train, x_test):
     categorical_feats = ["htn","dm","anemia"]
 
     all_cols = numeric_feats + categorical_feats + surg_cols
+    drop_cols = ["anemia"]
 
-    #df_train = pd.DataFrame(x_train, columns=all_cols)
-    #df_test = pd.DataFrame(x_test, columns=all_cols)
-    df_train = pd.DataFrame(x_train, columns=all_cols).drop(columns=surg_cols)
-    df_test  = pd.DataFrame(x_test,  columns=all_cols).drop(columns=surg_cols)
+    df_train = (
+        pd.DataFrame(x_train, columns=all_cols)
+        .drop(columns=drop_cols)
+    )
+    df_test  = (
+        pd.DataFrame(x_test,  columns=all_cols)
+        .drop(columns=drop_cols)
+    )
 
     # Build preprocessor
     preprocessor = ColumnTransformer([
-        ("num", StandardScaler(), numeric_feats),
-        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_feats),
+        ("num", StandardScaler(),           ["gender","bmi","creatinine"]),
+        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), ["dm", "htn"]),
     ])
 
     return  preprocessor, df_train, df_test
 
 def create_model(preprocessor):
+
+    weights = {0: 10,
+               1: 3, #og: 1 is 1 and 2 is 2
+               2: 2}
 
     knn_pipe = ImbPipeline([
         ('pre',   preprocessor),
@@ -82,7 +98,7 @@ def create_model(preprocessor):
     sgd_pipe = ImbPipeline([
         ('pre',   preprocessor),
         ('smote', SMOTE(random_state=42)),
-        ('sgd',   SGDClassifier(loss="log_loss", penalty="elasticnet",class_weight="balanced", random_state=42))
+        ('sgd',   SGDClassifier(loss="log_loss", penalty="elasticnet",class_weight=weights, random_state=42))
     ])
     bb_pipe = ImbPipeline([
         ('pre',   preprocessor),
@@ -113,17 +129,20 @@ def create_model(preprocessor):
         ('lr',      LogisticRegression(
             penalty='l2',
             C=1.0,
-            class_weight='balanced',
+            class_weight=weights,
             max_iter=1000,
-            random_state=42
+            random_state=42,
         ))
     ])
 
     stack = StackingClassifier(
         estimators=estimators,
         final_estimator=final_pipe,
-        cv=5,
-        n_jobs=-1,
+        cv=StratifiedKFold(
+            n_splits=5,
+            shuffle=False    # no shuffling = deterministic splits
+        ),
+        n_jobs=1,            # single‑threaded for reproducibility
         passthrough=False
     )
 
@@ -131,30 +150,35 @@ def create_model(preprocessor):
 
 def apply_thresholds(y_proba):
 
-    TAU_HIGH = 0.4
     TAU_LOW  = 0.4
-    # default Normal
+    TAU_NORMAL = 0.35
+    TAU_HIGH = 0.3
 
     pred = np.full(shape=(y_proba.shape[0],), fill_value=1, dtype=int)
 
-    high = y_proba[:, 2] >= TAU_HIGH
-    low  = (y_proba[:, 0] >= TAU_LOW) & (~high)
+    norm = (y_proba[:, 1] >= TAU_NORMAL)
+    high = (y_proba[:, 2] >= TAU_HIGH) & (~norm)
+    low  = (y_proba[:, 0] >= TAU_LOW)  & (~norm) & (~high)
+
     pred[high] = 2
     pred[low]  = 0
+    pred[norm] = 1
 
     return pred
 
-def train_and_evaluate(x_train, x_test, y_train, y_test):
+def train_and_evaluate(x_train, x_test, y_train, y_test, preprocessor):
 
     stack = create_model(preprocessor)
     stack.fit(x_train, y_train)
+    dump(stack, "stacked_ensemble3")
 
-    dump(stack, "stacked_ensemble")
-    #stack = load("stacked_ensemble")
+    stack = load("stacked_ensemble3")
 
-    run_permutation_importance(stack, x_test, y_test, n_repeats=20)
+    #run_permutation_importance(stack, x_test, y_test, n_repeats=20)
     y_pred_proba = stack.predict_proba(x_test)
     y_pred= apply_thresholds(y_pred_proba)
+
+    #y_pred = stack.predict(x_test)
 
     print(classification_report(y_test, y_pred))
     cm = confusion_matrix(y_test, y_pred, labels=[0, 1, 2])
@@ -235,6 +259,27 @@ def norm_to_high_eror(stack, x_test, y_test, y_pred):
         .head(10)
     print(bad_by_mag[['feature','mean_shap_normal']])
 
+def norm_to_low_eror(stack, x_test, y_test, y_pred):
+
+    # Identify misclassified Norm->High cases
+    mask = (y_test == 1) & (y_pred == 0)
+    X_mis = x_test[mask]
+
+    explainer = shap.Explainer(stack.predict_proba, x_test)
+    shap_vals_mis = explainer(X_mis)
+    mean_shap_high = shap_vals_mis.values[:,:,1].mean(axis=0)
+
+    mis_imp_df = pd.DataFrame({
+        'feature': x_test.columns,
+        'mean_shap_normal': mean_shap_high
+    }).sort_values('mean_shap_normal', ascending=False)
+
+    mis_imp_df['abs_shap'] = mis_imp_df['mean_shap_normal'].abs()
+    bad_by_mag = mis_imp_df[mis_imp_df['mean_shap_normal'] < 0] \
+        .sort_values('abs_shap', ascending=False) \
+        .head(10)
+    print(bad_by_mag[['feature','mean_shap_normal']])
+
 def low_to_norm_eror(stack, x_test, y_test, y_pred):
 
     #identify misclassified Low -> normal cases
@@ -262,10 +307,22 @@ y_train= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_train_p
 y_test= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/y_test_preop3.joblib")
 
 preprocessor, df_x_train, df_x_test = process_data(x_train, x_test)
-stack, y_pred = train_and_evaluate(df_x_train, df_x_test, y_train, y_test)
 
+#dump(preprocessor, "preprocessor.joblib")
+#dump(df_x_train, "df_x_train.joblib")
+#dump(df_x_test, "df_x_test.joblib")
+
+#df_x_train= load("df_x_train.joblib")
+#df_x_test= load("df_x_test.joblib")
+#preprocessor= load("preprocessor.joblib")
+
+stack, y_pred = train_and_evaluate(df_x_train, df_x_test, y_train, y_test, preprocessor)
+
+print("high to norm")
 high_to_norm_error(stack, df_x_test, y_test, y_pred)
+print("norm to high")
 norm_to_high_eror(stack, df_x_test, y_test, y_pred)
+print("norm to low")
+norm_to_low_eror(stack, df_x_test, y_test, y_pred)
+print("low to norm")
 low_to_norm_eror(stack, df_x_test, y_test, y_pred)
-
-
