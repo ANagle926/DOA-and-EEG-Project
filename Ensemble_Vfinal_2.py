@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 import shap
 from imblearn.combine import SMOTEENN
@@ -6,28 +5,22 @@ from joblib import load, dump
 from matplotlib import pyplot as plt
 from pytorch_tabnet.tab_model import TabNetClassifier
 from sklearn.compose import ColumnTransformer
-from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
 from sklearn.ensemble import StackingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
-from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, make_scorer, f1_score
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.model_selection import StratifiedKFold
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.pipeline import Pipeline
 from imblearn.over_sampling import SMOTE, BorderlineSMOTE, SVMSMOTE
-from imblearn.ensemble    import EasyEnsembleClassifier, BalancedBaggingClassifier
+from imblearn.ensemble    import  BalancedBaggingClassifier
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.tree         import DecisionTreeClassifier
-from sklearn.svm          import SVC
 from sklearn.neighbors    import KNeighborsClassifier
 from imblearn.pipeline               import Pipeline as ImbPipeline
-
-
-#with preprocessing
 import os, random
 import numpy as np
 import torch
-from tensorflow.python.layers.core import dropout
 
 os.environ['PYTHONHASHSEED']     = '42'
 random.seed(42)
@@ -62,10 +55,10 @@ def process_data(x_train, x_test):
     ]
 
     numeric_feats  = ["gender", "bmi", "creatinine", "gpt"]
-    categorical_feats = ["htn","dm","anemia"]
+    categorical_feats = ["htn","dm","anemia"] + surg_cols
 
-    all_cols = numeric_feats + categorical_feats + surg_cols
-    drop_cols = ["anemia"]
+    all_cols = numeric_feats + categorical_feats
+    drop_cols = surg_cols
 
     df_train = (
         pd.DataFrame(x_train, columns=all_cols)
@@ -78,8 +71,8 @@ def process_data(x_train, x_test):
 
     # Build preprocessor
     preprocessor = ColumnTransformer([
-        ("num", StandardScaler(),           ["gender","bmi","creatinine"]),
-        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), ["dm", "htn"]),
+        ("num", StandardScaler(),           ["gender","bmi","creatinine", "gpt"]),
+        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), ["dm", "htn", "anemia"]),
     ])
 
     return  preprocessor, df_train, df_test
@@ -87,7 +80,7 @@ def process_data(x_train, x_test):
 def create_model(preprocessor):
 
     weights = {0: 10,
-               1: 3, #og: 1 is 1 and 2 is 2
+               1: 3,
                2: 2}
 
     knn_pipe = ImbPipeline([
@@ -150,29 +143,40 @@ def create_model(preprocessor):
 
 def apply_thresholds(y_proba):
 
-    TAU_LOW  = 0.4
-    TAU_NORMAL = 0.35
-    TAU_HIGH = 0.3
+    """TAU_LOW  = 0.4
+    TAU_NORMAL = 0.4
+    TAU_HIGH = 0.4
 
     pred = np.full(shape=(y_proba.shape[0],), fill_value=1, dtype=int)
 
     norm = (y_proba[:, 1] >= TAU_NORMAL)
     high = (y_proba[:, 2] >= TAU_HIGH) & (~norm)
-    low  = (y_proba[:, 0] >= TAU_LOW)  & (~norm) & (~high)
+    low  = (y_proba[:, 0] >= TAU_LOW)  & (~norm) & (~high)""
 
     pred[high] = 2
     pred[low]  = 0
-    pred[norm] = 1
+    pred[norm] = 1"""
+
+    TAU_LOW  = 0.4
+    TAU_HIGH = 0.4
+
+    pred = np.full(shape=(y_proba.shape[0],), fill_value=1, dtype=int)
+
+    low  = (y_proba[:, 0] >= TAU_LOW)
+    high = (y_proba[:, 2] >= TAU_HIGH) & (~low)
+
+    pred[high] = 2
+    pred[low]  = 0
 
     return pred
 
 def train_and_evaluate(x_train, x_test, y_train, y_test, preprocessor):
 
-    stack = create_model(preprocessor)
-    stack.fit(x_train, y_train)
-    dump(stack, "stacked_ensemble3")
+    #stack = create_model(preprocessor)
+    #stack.fit(x_train, y_train)
+    #dump(stack, "stacked_ensemble4")
 
-    stack = load("stacked_ensemble3")
+    stack = load("stacked_ensemble4")
 
     #run_permutation_importance(stack, x_test, y_test, n_repeats=20)
     y_pred_proba = stack.predict_proba(x_test)
@@ -318,11 +322,11 @@ preprocessor, df_x_train, df_x_test = process_data(x_train, x_test)
 
 stack, y_pred = train_and_evaluate(df_x_train, df_x_test, y_train, y_test, preprocessor)
 
-print("high to norm")
+"""print("high to norm")
 high_to_norm_error(stack, df_x_test, y_test, y_pred)
 print("norm to high")
 norm_to_high_eror(stack, df_x_test, y_test, y_pred)
 print("norm to low")
 norm_to_low_eror(stack, df_x_test, y_test, y_pred)
 print("low to norm")
-low_to_norm_eror(stack, df_x_test, y_test, y_pred)
+low_to_norm_eror(stack, df_x_test, y_test, y_pred)"""
