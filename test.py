@@ -385,7 +385,6 @@ print("x_test size is ", x_test.shape)
 #starting after minority
 grid_search_model_and_smote(x_train, x_test, y_train, y_test)
 
-
 dataset= VitalDBDataset(num_cases=5000, threshold_def=0.1)
 
 x_train= dataset.x_train

@@ -172,13 +172,13 @@ def apply_thresholds(y_proba):
 
 def train_and_evaluate(x_train, x_test, y_train, y_test, preprocessor):
 
-    #stack = create_model(preprocessor)
-    #stack.fit(x_train, y_train)
-    #dump(stack, "stacked_ensemble4")
+    stack = create_model(preprocessor)
+    stack.fit(x_train, y_train)
+    dump(stack, "stacked_ensemble4")
 
     stack = load("stacked_ensemble4")
 
-    #run_permutation_importance(stack, x_test, y_test, n_repeats=20)
+    run_permutation_importance(stack, x_test, y_test, n_repeats=20)
     y_pred_proba = stack.predict_proba(x_test)
     y_pred= apply_thresholds(y_pred_proba)
 
@@ -322,11 +322,11 @@ preprocessor, df_x_train, df_x_test = process_data(x_train, x_test)
 
 stack, y_pred = train_and_evaluate(df_x_train, df_x_test, y_train, y_test, preprocessor)
 
-"""print("high to norm")
+print("high to norm")
 high_to_norm_error(stack, df_x_test, y_test, y_pred)
 print("norm to high")
 norm_to_high_eror(stack, df_x_test, y_test, y_pred)
 print("norm to low")
 norm_to_low_eror(stack, df_x_test, y_test, y_pred)
 print("low to norm")
-low_to_norm_eror(stack, df_x_test, y_test, y_pred)"""
+low_to_norm_eror(stack, df_x_test, y_test, y_pred)
