@@ -1,6 +1,8 @@
+import pickle
+
 import joblib
 import numpy as np
-from joblib import load
+from joblib import load, dump
 from keras.src.layers import MultiHeadAttention, LayerNormalization, Dense, Dropout
 from keras.src.saving import load_model, register_keras_serializable
 from matplotlib import pyplot as plt
@@ -8,6 +10,7 @@ from sklearn.metrics import mean_absolute_error, r2_score
 from keras import layers, Sequential
 import tensorflow as tf
 
+from VitalDBDataset import VitalDBDataset
 
 
 @register_keras_serializable()
@@ -93,7 +96,6 @@ import numpy as np
 import joblib
 from sklearn.metrics import mean_absolute_error
 
-
 def optimized_integrated_gradients(model, baseline, input_data, m_steps=50, sample_batch_size=8):
     """
     Safer version of Integrated Gradients: loops over samples in small batches,
@@ -164,16 +166,19 @@ def apply_feature_pruning(x_data, important_channels, timestep_masks):
 
     return x_pruned
 
-def fast_predict_with_ensemble(x_test, y_test=None, meta_model_path="/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/gbrt_model.pkl"):
+def fast_predict_with_ensemble(x_test, y_test=None, ):
+
     # Load meta-model and top-k indices
+    meta_model_path="/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Saved Model Versions/Regressor/gbrt_model_150.pkl"
     meta_data = joblib.load(meta_model_path)
+
     gbrt_model = meta_data["gbrt_model"]
     topk_idx = meta_data["topk_idx"]
 
     # Load only top-k models and predict
     topk_preds = []
     for i in topk_idx:
-        model = load_model(f'/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/ensemble_model_v4__{i}.keras')
+        model = load_model(f'/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/ensemble_model_150__V2.{i}.keras')
         y_pred = model.predict(x_test, verbose=0)
         topk_preds.append(y_pred)
     P_test = np.hstack(topk_preds)
@@ -184,22 +189,20 @@ def fast_predict_with_ensemble(x_test, y_test=None, meta_model_path="/mnt/c/User
     # Meta-model prediction
     meta_preds = gbrt_model.predict(P_test)
 
-    # Optionally compute MAE
-    mae = None
-    if y_test is not None:
-        mae = mean_absolute_error(y_test.flatten(), meta_preds.flatten())
-        print(f"Meta-Ensemble GBRT MAE: {mae:.4f}")
+    mae = mean_absolute_error(y_test.flatten(), meta_preds.flatten())
+    print(f"Meta-Ensemble GBRT MAE: {mae:.4f}")
 
     return meta_preds, mae
 
+#dataset=VitalDBDataset(max_cases=20)
+#dump(dataset, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID_100.joblib")
 
-dataset = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
+dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_150_cases_SEGLENMID.joblib")
 x_test, y_test = dataset.x_test, dataset.y_test
 x_train, y_train = dataset.x_train, dataset.y_train
 
-important_channels, timestep_masks = joblib.load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/pruning_artifacts_v2.joblib")
+important_channels, timestep_masks = joblib.load("pruning_artifacts_150.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 
 meta_preds, mae = fast_predict_with_ensemble(x_test_pruned, y_test)
-

@@ -1,13 +1,12 @@
 import numpy as np
 import torch
-from joblib import load
+from joblib import load, dump
 from keras import Sequential, Model
 from keras.src.saving import load_model, register_keras_serializable
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 import matplotlib.pyplot as plt
 import os
-from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, \
-    GlobalAveragePooling1D, MultiHeadAttention, Concatenate, Add, Activation
+from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, GlobalAveragePooling1D, MultiHeadAttention
 from keras.src.optimizers import Adam
 from keras.src.callbacks import EarlyStopping
 import keras
@@ -19,6 +18,7 @@ import joblib
 from sklearn.linear_model import RidgeCV
 from sklearn.ensemble import GradientBoostingRegressor
 
+from VitalDBDataset import VitalDBDataset
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -109,7 +109,6 @@ def get_device(force_cpu=False):
     print("⚡ Using GPU")
     return torch.device("cuda")
 
-
 def build_model(x_train, y_train, x_test, y_test):
     inputs = Input(shape=x_train.shape[1:])
     units=128
@@ -124,7 +123,6 @@ def build_model(x_train, y_train, x_test, y_test):
 
     x = MaxPooling1D(pool_size=2)(x)
     x = PositionalEmbedding(sequence_length=x.shape[1])(x)
-
     x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
 
     x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
@@ -321,10 +319,14 @@ def evaluate_model(model, x_test, y_test):
 
     pred_test = model.predict(x_test).flatten()
     test_mae = mean_absolute_error(y_test, pred_test)
+    mse = mean_squared_error(y_test, pred_test)
+    rmse = np.sqrt(mse)
     corr = np.corrcoef(y_test, pred_test)[0, 1]
     r2 = r2_score(y_test, pred_test)
 
     print(f"\n\U0001f4ca Test MAE: {test_mae:.4f}")
+    print(f"🧮 MSE: {mse:.4f}")
+    print(f"📏 RMSE: {rmse:.4f}")
     print(f"\U0001f4c8 Correlation coefficient: {corr:.4f}")
     print(f"\u2310 R² score: {r2:.4f}")
 
@@ -523,9 +525,9 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
 
         units = int(np.random.choice([64, 128]))
-        dropout = float(np.random.choice([0]))
-        batch_size = int(np.random.choice([32, 100]))
-        lr = float(np.random.choice([0.0001]))
+        dropout = float(np.random.choice([0, 0.1]))
+        batch_size = int(np.random.choice([16, 32, 64]))
+        lr = float(np.random.choice([0.0001, 0.0005]))
 
         print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
 
@@ -537,8 +539,9 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
 
         x = MaxPooling1D(pool_size=2)(x)
-        x = PositionalEmbedding(sequence_length=500)(x)
-        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout)(x)
+        x = PositionalEmbedding(sequence_length=x.shape[1])(x)
+        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
+
 
         x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
         x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
@@ -589,7 +592,7 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
             verbose=1
         )
 
-        model.save(f'ensemble_model_v4__{i}.keras')
+        model.save(f'ensemble_model_150__V3.{i}.keras')
         y_pred = model.predict(x_test, verbose=1)
         preds.append(y_pred)
         mae = mean_absolute_error(y_test, y_pred)
@@ -605,11 +608,13 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
     # Compute performance metrics
     ensemble_mae = mean_absolute_error(y_test, ensemble_preds)
+    ensemble_mse = mean_squared_error(y_test, ensemble_preds)
     ensemble_r2 = r2_score(y_test, ensemble_preds)
     ensemble_corr = np.corrcoef(y_test, ensemble_preds)[0, 1]
 
     # Display results
     print(f"\n📊 Top-{len(topk_idx)} Weighted Ensemble MAE: {ensemble_mae:.4f}")
+    print(f"\n📊 Top-{len(topk_idx)} Weighted Ensemble MSE: {ensemble_mse:.4f}")
     print(f"📈 Correlation coefficient: {ensemble_corr:.4f}")
     print(f"📐 R² score: {ensemble_r2:.4f}")
     print(f"🏆 Used model indices: {topk_idx}")
@@ -622,7 +627,7 @@ def create_GBRT(n_models, x_test, y_test):
     val_maes = []
 
     for i in range(n_models):
-        model = load_model(f'ensemble_model_v4__{i}.keras')
+        model = load_model(f'ensemble_model_150__V3.{i}.keras')
         y_pred = model.predict(x_test, verbose=1)
         preds.append(y_pred)
         mae = mean_absolute_error(y_test, y_pred)
@@ -641,10 +646,10 @@ def create_GBRT(n_models, x_test, y_test):
 
     # Save everything
     joblib.dump({
-        "gbrt_model": gbrt_model,
-        "topk_idx": topk_idx,
-        "topk_preds_test": P_test
-    }, "Saved Model Versions/Regressor/gbrt_model.pkl")
+        "gbrt_model_150_V3": gbrt_model,
+        "topk_idx_150_V3": topk_idx,
+        "topk_preds_test_150_V3": P_test
+    }, "Saved Model Versions/Regressor/gbrt_model_150_V3.pkl")
 
 
     # Use only top-k preds for test input
@@ -654,37 +659,44 @@ def create_GBRT(n_models, x_test, y_test):
 
     meta_test_preds = gbrt_model.predict(P_test)
     mae = mean_absolute_error(y_test, meta_test_preds)
+    mse = mean_squared_error(y_test, meta_test_preds)
+    corr = np.corrcoef(y_test, meta_test_preds)[0, 1]
+    r2 = r2_score(y_test, meta_test_preds)
     print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")
+    print(f"🔍 Meta-Ensemble GBRT MSE on Test Set: {mse:.4f}")
+    print(f"🔍 Meta-Ensemble GBRT CORR on Test Set: {corr:.4f}")
+    print(f"🔍 Meta-Ensemble GBRT RSQUARED on Test Set: {r2:.4f}")
 
 
-dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
+#dataset=VitalDBDataset(max_cases=150)
+#dump(dataset, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_150_cases_SEGLENMID.joblib")
 
-x_train, y_train = dataset.x_train, dataset.y_train
+dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_150_cases_SEGLENMID.joblib")
 x_test, y_test = dataset.x_test, dataset.y_test
+x_train, y_train = dataset.x_train, dataset.y_train
 c_test= dataset.c_test
 c_train= dataset.c_train
 
 #analyze_dataset(x_train, y_train, x_test, y_test)
+#print("x_train_raw shape:", x_train.shape)
+#print("x_test_raw shape:", x_test.shape)
 
-print("x_train_raw shape:", x_train.shape)
-print("x_test_raw shape:", x_test.shape)
 
+"""model = build_model(x_train, y_train, x_test, y_test)
+model.save("eeg_regressor_150.keras")"""
 
-#model = build_model(x_train, y_train, x_test, y_test)
-#model.save("eeg_regressor_v4.keras")
-model = load_model("Saved Model Versions/Regressor/eeg_regressor_v4.keras")
+model= keras.models.load_model("eeg_regressor_150.keras")
 evaluate_model(model, x_test, y_test)
 
 
-"""# Compute important features using training data
-important_channels, timestep_masks = perform_integrated_gradients_feature_importance(
+"""important_channels, timestep_masks = perform_integrated_gradients_feature_importance(
     model, x_train[:2000],
     channel_threshold=0.15,
     timestep_percentile=60
 )
 
-joblib.dump((important_channels, timestep_masks), "pruning_artifacts_v4.joblib")
-print("✅ Saved pruning artifacts to pruning_artifacts_v4.joblib")
+joblib.dump((important_channels, timestep_masks), "pruning_artifacts_150.joblib")
+print("✅ Saved pruning artifacts to pruning_artifacts_150.joblib")
 
 # Prune both datasets using same features (prevents data leakage)
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
@@ -693,19 +705,17 @@ x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks
 assert x_train_pruned.shape[2] == len(important_channels), \
     "Channel count mismatch after pruning"
 assert x_test_pruned.shape[1:] == x_train_pruned.shape[1:], \
-    "Train/test shape mismatch"""
+    "Train/test shape mismatch"""""
 
-important_channels, timestep_masks = joblib.load("Saved Model Versions/Regressor/Pruning/pruning_artifacts_v2.joblib")
+important_channels, timestep_masks = joblib.load("pruning_artifacts_150.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
-print(x_train_pruned.shape)
 
-
+#print(x_train_pruned.shape)
 #model = build_model(x_train_pruned, y_train, x_test_pruned, y_test)
-#model.save("eeg_regressor_pruned_v4.keras")
-model = load_model("Saved Model Versions/Regressor/Pruning/eeg_regressor_pruned_v4.keras")
-evaluate_model(model, x_test_pruned, y_test)
+#model.save("eeg_regressor_pruned_100.keras")
+#evaluate_model(model, x_test_pruned, y_test)
 
-n_models=6
+n_models=5
 ensemble_preds, ensemble_mae, ensemble_r2, ensemble_corr= create_ensemble( x_train_pruned, y_train, x_test_pruned, y_test, n_models=n_models)
 create_GBRT(n_models=n_models, x_test=x_test_pruned, y_test=y_test)
