@@ -36,8 +36,8 @@ from VitalDBDataset import VitalDBDataset
 
 def process_data(x_train, x_test, y_train, y_test):
 
-    y_train = np.where(y_train == 1, "normal",    "abnormal")
-    y_test  = np.where(y_test  == 1, "normal",    "abnormal")
+    #y_train = np.where(y_train == 1, "normal",    "abnormal")
+    #y_test  = np.where(y_test  == 1, "normal",    "abnormal")
 
 
     surg_cols   = [

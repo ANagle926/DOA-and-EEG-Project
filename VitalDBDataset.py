@@ -62,8 +62,9 @@ class VitalDBDataset:
     def load_data(self):
 
         """"Loads and processes EEG and MAC data from VitalDB."""
-        df_trks = pd.read_csv("https://api.vitaldb.net/trks")
+        print("hello!!!")
         df_cases = pd.read_csv("https://api.vitaldb.net/cases")
+        df_trks = pd.read_csv("https://api.vitaldb.net/trks")
 
         # Select valid case IDs
         caseids =   list(set(df_trks.loc[df_trks['tname'] == 'Primus/EXP_SEVO', 'caseid']) &
@@ -77,7 +78,7 @@ class VitalDBDataset:
         excluded=0
 
         print("caseids", len(caseids))
-        missing_counts = {name: 0 for name in ['sex', 'bmi', 'surgery_type', 'hypertension', 'diabetes', 'hemoglobin', 'creatinine', 'gpt', 'physical_stat']}
+        missing_counts = {name: 0 for name in ['sex', 'bmi', 'surgery_type', 'hypertension', 'diabetes', 'hemoglobin', 'creatinine', 'gpt', 'physical_stat', 'age']}
 
 
         for caseid in caseids:
@@ -143,11 +144,9 @@ class VitalDBDataset:
             creatinine= df_cases.loc[df_cases['caseid'] == caseid, 'preop_cr'].values[0]
             gpt= df_cases.loc[df_cases['caseid'] == caseid, 'preop_alt'].values[0]
             physical_stat =df_cases.loc[df_cases['caseid'] == caseid, 'asa'].values[0]
-            #ph = df_cases.loc[df_cases['caseid'] == caseid, 'preop_ph'].values[0]
-            #oxygen = df_cases.loc[df_cases['caseid'] == caseid, 'preop_pao2'].values[0]
-            #carbon_dioxide = df_cases.loc[df_cases['caseid'] == caseid, 'preop_paco2'].values[0]
+            age = df_cases.loc[df_cases['caseid'] == caseid, 'age'].values[0]
 
-            preop_vals  = [sex, bmi, surgery_type, hypertension, diabetes, hemoglobin, creatinine, gpt, physical_stat]
+            preop_vals  = [sex, bmi, surgery_type, hypertension, diabetes, hemoglobin, creatinine, gpt, physical_stat, age]
             preop_names = list(missing_counts.keys())
 
             missing = [name for name, val in zip(preop_names, preop_vals)
@@ -159,7 +158,7 @@ class VitalDBDataset:
                 excluded += 1
                 continue
 
-            case_features = [sex, bmi, surgery_type, hypertension, diabetes, hemoglobin, creatinine, gpt, physical_stat]
+            case_features = [sex, bmi, surgery_type, hypertension, diabetes, hemoglobin, creatinine, gpt, physical_stat, age]
 
             x.append(case_features)
             y.append(mac_class)
@@ -182,7 +181,7 @@ class VitalDBDataset:
         Processes data in chunks to avoid memory overload and helps debug outliers.
         """
 
-        x_masked = np.array(x, dtype=np.float32)
+        """x_masked = np.array(x)
         y_masked = np.array(y, dtype=np.float32)
         c_masked = np.array(c, dtype=np.float32)
 
@@ -195,6 +194,17 @@ class VitalDBDataset:
         c_clean = c_masked[valid_mask]
 
         print(f"{100 * (1 - np.mean(valid_mask)):.1f}% samples removed (had NaNs)")
+        return x_clean, y_clean, c_clean"""
+
+        extra_string_nulls=('','nan','NaN')
+        x_df = pd.DataFrame(x, copy=False)
+        x_tmp = x_df.replace({s: np.nan for s in extra_string_nulls})
+        valid_mask = ~x_tmp.isna().any(axis=1)
+        x_clean = x_df.to_numpy()[valid_mask]
+        y_clean = np.asarray(y,  dtype=np.float32)[valid_mask]
+        c_clean = np.asarray(c,  dtype=np.float32)[valid_mask]
+
+        print(f"{100 * (1 - valid_mask.mean()):.1f}% samples removed (had NaNs / empty strings)")
         return x_clean, y_clean, c_clean
 
 
