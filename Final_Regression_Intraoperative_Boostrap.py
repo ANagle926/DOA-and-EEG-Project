@@ -4,7 +4,7 @@ from joblib import load
 from keras import Sequential, Model
 from keras.src.saving import load_model, register_keras_serializable
 from matplotlib import pyplot
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 import matplotlib.pyplot as plt
 import os
 from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, \
@@ -42,26 +42,6 @@ class PositionalEmbedding(layers.Layer):
         config = super().get_config()
         config.update({"sequence_length": self.sequence_length})
         return config
-@register_keras_serializable()
-class AttentionPooling1D(layers.Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def build(self, input_shape):
-        self.attention_weights = self.add_weight(
-            name="attention_weights",
-            shape=(input_shape[-1], 1),
-            initializer="glorot_uniform",
-            trainable=True,
-        )
-
-    def call(self, inputs):
-        scores = tf.matmul(inputs, self.attention_weights)  # (batch, time, 1)
-        scores = tf.nn.softmax(scores, axis=1)
-        return tf.reduce_sum(inputs * scores, axis=1)
-
-    def get_config(self):
-        return super().get_config()
 @register_keras_serializable()
 class TransformerBlock(layers.Layer):
     def __init__(self, num_heads, key_dim, ff_units, dropout_rate, **kwargs):
@@ -212,7 +192,6 @@ def apply_feature_pruning(x_data, important_channels, timestep_masks):
 
     return x_pruned
 
-
 def weighted_topk_ensemble(preds, val_maes, k=3):
     val_maes = np.array(val_maes)
     preds = np.array(preds)  # shape: (n_models, n_samples)
@@ -268,9 +247,9 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
 
         units = int(np.random.choice([64, 128]))
-        dropout = float(np.random.choice([0]))
-        batch_size = int(np.random.choice([32, 100]))
-        lr = float(np.random.choice([0.0001]))
+        dropout = float(np.random.choice([0, 0.1]))
+        batch_size = int(np.random.choice([16, 32, 64]))
+        lr = float(np.random.choice([0.0001, 0.0005]))
 
         print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
 
@@ -282,8 +261,9 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
 
         x = MaxPooling1D(pool_size=2)(x)
-        x = PositionalEmbedding(sequence_length=500)(x)
-        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=256, dropout_rate=dropout)(x)
+        x = PositionalEmbedding(sequence_length=x.shape[1])(x)
+        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
+
 
         x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
         x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
@@ -370,7 +350,7 @@ def create_GBRT(n_models, x_test, y_test):
         "gbrt_model": gbrt_model,
         "topk_idx": topk_idx,
         "topk_preds_test": P_test
-    }, "Saved Model Versions/Regressor/gbrt_model.pkl")
+    }, "Saved Model Versions/Regressor/gbrt_model_bootstrap.pkl")
 
 
     # Use only top-k preds for test input
@@ -380,12 +360,16 @@ def create_GBRT(n_models, x_test, y_test):
 
     meta_test_preds = gbrt_model.predict(P_test)
     mae = mean_absolute_error(y_test, meta_test_preds)
+    mse = mean_squared_error(y_test, meta_test_preds)
+    rmse = np.sqrt(mse)
+    corr = np.corrcoef(y_test, meta_test_preds)[0, 1]
+    r2 = r2_score(y_test, meta_test_preds)
 
     #print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")
-    return mae
+    return mae, mse, rmse, corr, r2
 
 
-dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_twenty_cases_SEGLENMID.joblib")
+dataset=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/dataset_150_cases_SEGLENMID.joblib")
 
 x_train, y_train = dataset.x_train, dataset.y_train
 x_test, y_test = dataset.x_test, dataset.y_test
@@ -393,18 +377,23 @@ c_test= dataset.c_test
 c_train= dataset.c_train
 
 
-important_channels, timestep_masks = joblib.load("Saved Model Versions/Regressor/Pruning/pruning_artifacts_v2.joblib")
+important_channels, timestep_masks = joblib.load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Saved Model Versions/Regressor/Pruning/pruning_artifacts_150.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 print(x_train_pruned.shape)
 
 
 # configure bootstrap
-n_iterations = 500
-n_models=6
+n_iterations = 25
+n_models = 3
 
 # run bootstrap
-stats = list()
+mae_list = list()
+mse_list= list()
+rmse_list= list()
+corr_list= list()
+r2_list= list()
+
 for i in range(n_iterations):
 
     # prepare train and test sets
@@ -415,20 +404,76 @@ for i in range(n_iterations):
 
     # fit model
     create_ensemble( x_bootstrap, y_bootstrap, x_test_pruned, y_test, n_models=n_models)
-    mae=create_GBRT(n_models=n_models, x_test=x_test_pruned, y_test=y_test)
+    mae, mse, rmse, corr, r2=create_GBRT(n_models=n_models, x_test=x_test_pruned, y_test=y_test)
 
-    stats.append(mae)
+    mae_list.append(mae)
+    mse_list.append(mse)
+    rmse_list.append(rmse)
+    corr_list.append(corr)
+    r2_list.append(r2)
+
     print(f"[{i+1}/{n_iterations}] MAE: {mae:.4f}")
+    print(f"[{i+1}/{n_iterations}] MSE: {mse:.4f}")
+    print(f"[{i+1}/{n_iterations}] RMSE: {rmse:.4f}")
+    print(f"[{i+1}/{n_iterations}] CORR: {corr:.4f}")
+    print(f"[{i+1}/{n_iterations}] R2: {r2:.4f}")
 
 # Plot results
-pyplot.hist(stats, bins=30)
+pyplot.hist(mae_list, bins=30)
 pyplot.xlabel("MAE")
 pyplot.ylabel("Frequency")
 pyplot.title("Bootstrap Distribution of GBRT Meta-MAE")
 pyplot.show()
 
+pyplot.hist(mse_list, bins=30)
+pyplot.xlabel("MSE")
+pyplot.ylabel("Frequency")
+pyplot.title("Bootstrap Distribution of GBRT Meta-MSE")
+pyplot.show()
+
+pyplot.hist(rmse_list, bins=30)
+pyplot.xlabel("RMSE")
+pyplot.ylabel("Frequency")
+pyplot.title("Bootstrap Distribution of GBRT Meta-RMSE")
+pyplot.show()
+
+pyplot.hist(corr_list, bins=30)
+pyplot.xlabel("Corr")
+pyplot.ylabel("Frequency")
+pyplot.title("Bootstrap Distribution of GBRT Meta-corr")
+pyplot.show()
+
+pyplot.hist(r2_list, bins=30)
+pyplot.xlabel("r2")
+pyplot.ylabel("Frequency")
+pyplot.title("Bootstrap Distribution of GBRT Meta-r2")
+pyplot.show()
+
 # confidence intervals
 alpha = 0.95
-lower = np.percentile(stats, ((1.0 - alpha) / 2.0) * 100)
-upper = np.percentile(stats, (alpha + (1.0 - alpha) / 2.0) * 100)
+lower = np.percentile(mae_list, ((1.0 - alpha) / 2.0) * 100)
+upper = np.percentile(mae_list, (alpha + (1.0 - alpha) / 2.0) * 100)
 print(f"{alpha*100:.1f}% confidence interval for MAE: {lower:.4f} to {upper:.4f}")
+
+# confidence intervals
+lower = np.percentile(mse_list, ((1.0 - alpha) / 2.0) * 100)
+upper = np.percentile(mse_list, (alpha + (1.0 - alpha) / 2.0) * 100)
+print(f"{alpha*100:.1f}% confidence interval for MSE: {lower:.4f} to {upper:.4f}")
+
+
+# confidence intervals
+lower = np.percentile(rmse_list, ((1.0 - alpha) / 2.0) * 100)
+upper = np.percentile(rmse_list, (alpha + (1.0 - alpha) / 2.0) * 100)
+print(f"{alpha*100:.1f}% confidence interval for RMSE: {lower:.4f} to {upper:.4f}")
+
+
+# confidence intervals
+lower = np.percentile(corr_list, ((1.0 - alpha) / 2.0) * 100)
+upper = np.percentile(corr_list, (alpha + (1.0 - alpha) / 2.0) * 100)
+print(f"{alpha*100:.1f}% confidence interval for CORR: {lower:.4f} to {upper:.4f}")
+
+
+# confidence intervals
+lower = np.percentile(r2_list, ((1.0 - alpha) / 2.0) * 100)
+upper = np.percentile(r2_list, (alpha + (1.0 - alpha) / 2.0) * 100)
+print(f"{alpha*100:.1f}% confidence interval for R2: {lower:.4f} to {upper:.4f}")

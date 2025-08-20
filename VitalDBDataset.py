@@ -2,20 +2,35 @@ import numpy as np
 import pandas as pd
 import psutil
 import vitaldb
-from joblib import load, Parallel, delayed, dump
+from joblib import Parallel, delayed, dump, load
 from matplotlib import pyplot as plt
-
-
 from sklearn.preprocessing import StandardScaler
 from PyEMD import EEMD
 import time
 
-def apply_eemd_to_wave(wave):
+def apply_eemd_to_wave(wave, visualize=True):
+
     noise_std = 0.03
 
     eemd = EEMD()
     eemd.noise_width = noise_std
     imfs = eemd.eemd(wave)
+
+    if visualize:
+        n_imfs = imfs.shape[0]
+        fig, axes = plt.subplots(n_imfs + 1, 1, figsize=(10, 2*(n_imfs+1)), sharex=True)
+
+        # Original signal
+        axes[0].plot(wave, color='black')
+        axes[0].set_title("Original Signal")
+
+        # Plot each IMF
+        for i in range(n_imfs):
+            axes[i+1].plot(imfs[i], color='blue')
+            axes[i+1].set_title(f"IMF {i+1}")
+
+        plt.tight_layout()
+        plt.show()
 
     kept_imfs = imfs[:3]
 
@@ -65,24 +80,24 @@ class VitalDBDataset:
 
         x,y,b,c= self.load_data()
         x, b, c = self.remove_invalid_samples(x,b,c)
-
-        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter_100.joblib")
-        dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/b_data_without_filter_100.joblib")
-
         x, b, c= self.remove_excessive_samples(x,b,c)
+        #dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter_150.joblib")
+        #dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/b_data_without_filter_150.joblib")
+        #dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/c_data_without_filter_150.joblib")
+
 
         x =self.apply_EEMD_filter(x)
 
-        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x_100.joblib")
-        dump(b, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b_100.joblib")
-        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c_100.joblib")
+        """#dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_x_150.joblib")
+        #dump(b, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_b_150.joblib")
+        #dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/postprocess_c_150.joblib")
         print("finished saving EEMD Data")
 
         print(f"Available memory: {psutil.virtual_memory().available / (1024 ** 3):.2f} GB")
 
         self.visualize_imfs(x)
         self.split_data(x, b, c)
-        print("done splitting data")
+        print("done splitting data")"""
 
     def remove_excessive_samples(self, x, b, c):
         # Step 1: Initialize mask for keeping valid samples

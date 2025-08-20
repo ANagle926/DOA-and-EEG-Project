@@ -44,26 +44,6 @@ class PositionalEmbedding(layers.Layer):
         config.update({"sequence_length": self.sequence_length})
         return config
 @register_keras_serializable()
-class AttentionPooling1D(layers.Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def build(self, input_shape):
-        self.attention_weights = self.add_weight(
-            name="attention_weights",
-            shape=(input_shape[-1], 1),
-            initializer="glorot_uniform",
-            trainable=True,
-        )
-
-    def call(self, inputs):
-        scores = tf.matmul(inputs, self.attention_weights)  # (batch, time, 1)
-        scores = tf.nn.softmax(scores, axis=1)
-        return tf.reduce_sum(inputs * scores, axis=1)
-
-    def get_config(self):
-        return super().get_config()
-@register_keras_serializable()
 class TransformerBlock(layers.Layer):
     def __init__(self, num_heads, key_dim, ff_units, dropout_rate, **kwargs):
         super().__init__(**kwargs)
@@ -683,6 +663,7 @@ c_train= dataset.c_train
 
 
 """model = build_model(x_train, y_train, x_test, y_test)
+
 model.save("eeg_regressor_150.keras")"""
 
 model= keras.models.load_model("eeg_regressor_150.keras")
@@ -707,7 +688,7 @@ assert x_train_pruned.shape[2] == len(important_channels), \
 assert x_test_pruned.shape[1:] == x_train_pruned.shape[1:], \
     "Train/test shape mismatch"""""
 
-important_channels, timestep_masks = joblib.load("pruning_artifacts_150.joblib")
+important_channels, timestep_masks = joblib.load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Saved Model Versions/Regressor/Pruning/pruning_artifacts_150.joblib")
 x_train_pruned = apply_feature_pruning(x_train, important_channels, timestep_masks)
 x_test_pruned = apply_feature_pruning(x_test, important_channels, timestep_masks)
 
