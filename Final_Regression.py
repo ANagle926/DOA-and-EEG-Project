@@ -1,0 +1,216 @@
+import numpy as np
+from joblib import dump, load
+from keras import Sequential, Model
+from keras.src.saving import register_keras_serializable, load_model
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
+import os
+from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, GlobalAveragePooling1D, MultiHeadAttention
+from keras.src.optimizers import Adam
+from keras.src.callbacks import EarlyStopping
+import keras
+from keras.src.optimizers.schedules import CosineDecayRestarts
+import tensorflow as tf
+from keras import layers
+from sklearn.ensemble import GradientBoostingRegressor
+from VitalDBDataset import VitalDBDataset
+
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+@register_keras_serializable()
+class PositionalEmbedding(layers.Layer):
+    def __init__(self, sequence_length, **kwargs):
+        super().__init__(**kwargs)
+        self.sequence_length = sequence_length
+
+    def build(self, input_shape):
+        d_model = input_shape[-1]
+        self.token_proj = layers.Dense(d_model)
+        self.position_embeddings = layers.Embedding(input_dim=self.sequence_length, output_dim=d_model)
+
+    def call(self, x):
+        length = tf.shape(x)[1]
+        positions = tf.range(start=0, limit=length, delta=1)
+        pos_encoding = self.position_embeddings(positions)
+        return x + pos_encoding
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"sequence_length": self.sequence_length})
+        return config
+@register_keras_serializable()
+class TransformerBlock(layers.Layer):
+    def __init__(self, num_heads, key_dim, ff_units, dropout_rate, **kwargs):
+        super().__init__(**kwargs)
+        self.num_heads = num_heads
+        self.key_dim = key_dim
+        self.ff_units = ff_units
+        self.dropout_rate = dropout_rate
+
+        self.attn = MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)
+        self.attn_norm = LayerNormalization()
+        self.ffn_norm = LayerNormalization()
+
+    def build(self, input_shape):
+        embed_dim = input_shape[-1]
+        self.ffn = Sequential([
+            Dense(self.ff_units, activation='relu'),
+            Dropout(self.dropout_rate),
+            Dense(embed_dim),
+        ])
+        super().build(input_shape)
+
+    def call(self, x, training=False):
+        attn_output = self.attn(x, x, training=training)
+        attn_output = self.attn_norm(x + attn_output)
+        ffn_output = self.ffn(attn_output, training=training)
+        return self.ffn_norm(attn_output + ffn_output)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "num_heads": self.num_heads,
+            "key_dim": self.key_dim,
+            "ff_units": self.ff_units,
+            "dropout_rate": self.dropout_rate,
+        })
+        return config
+
+def create_GBRT(preds, y_true):
+
+    y_true = y_true.flatten()
+    P = np.hstack(preds)
+
+    model = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1)
+
+    model.fit(P, y_true)
+    final_predictions = model.predict(P)
+
+    #dump(model, "Files/Saved Model Files/GBRT/gbrt_model_150_raw.pkl")
+
+    return final_predictions, model
+
+def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
+
+    x_train = x_train.reshape((-1, 1024, 1))
+    x_test  = x_test.reshape((-1, 1024, 1))
+    inputs = Input(shape=(1024, 1))
+
+    preds = []
+
+    for i in range(n_models):
+        print(f"\n🔁 Training model {i + 1}/{n_models}")
+
+        units = int(np.random.choice([64, 128]))
+        dropout = float(np.random.choice([0, 0.1]))
+        batch_size = int(np.random.choice([16, 32, 64]))
+        lr = float(np.random.choice([0.0001, 0.0005]))
+
+        print(f"🧪 units={units}, dropout=({dropout}, batch_size={batch_size}, lr={lr}")
+
+        x = Conv1D(filters=64, kernel_size=3, activation='relu')(inputs)
+        x = Conv1D(filters=64, kernel_size=3, activation='relu')(x)
+
+        x = MaxPooling1D(pool_size=2)(x)
+        x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
+        x = Conv1D(filters=128, kernel_size=3, activation='relu')(x)
+
+        x = MaxPooling1D(pool_size=2)(x)
+        x = PositionalEmbedding(sequence_length=x.shape[1])(x)
+        x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
+
+
+        x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
+        x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
+
+        x = MaxPooling1D(pool_size=2)(x)
+
+        x = Bidirectional(LSTM(units*2, return_sequences=True))(x)
+        x = TransformerBlock(num_heads=4, key_dim=units*2, ff_units=512, dropout_rate=dropout)(x)
+
+        x = GlobalAveragePooling1D()(x)
+
+        x = Dense(256, activation='relu')(x)
+        x = Dense(128, activation='relu')(x)
+        x = Dense(64, activation='relu')(x)
+        outputs = Dense(1)(x)
+
+        model = Model(inputs=inputs, outputs=outputs, name="functional_bis_model")
+
+        initial_learning_rate = lr
+        first_decay_steps = 5
+        t_mul = 2.0
+        m_mul = 0.9
+
+        lr_schedule = CosineDecayRestarts(
+            initial_learning_rate=initial_learning_rate,
+            first_decay_steps=first_decay_steps,
+            t_mul=t_mul,
+            m_mul=m_mul,
+            alpha=1e-6  # minimum learning rate
+        )
+
+        model.compile(
+            optimizer=Adam(learning_rate=lr_schedule),
+            loss=keras.losses.Huber(delta=1.0),
+            metrics=['mae']
+        )
+
+        callbacks = [
+            EarlyStopping(monitor='val_mae', patience=6, restore_best_weights=True, verbose=1),
+        ]
+
+        model.fit(
+            x_train, y_train,
+            validation_data=(x_test, y_test),
+            epochs=80,
+            batch_size=batch_size,
+            callbacks=callbacks,
+            verbose=1
+        )
+
+        #model.save(f'ensemble_model_150_raw.{i}.keras')
+        y_pred = model.predict(x_test, verbose=1)
+        preds.append(y_pred)
+
+    return preds
+
+def load_ensemble(x_test, n_models):
+    preds = []
+
+    for i in range(n_models):
+
+        model= load_model(f'ensemble_model_150_raw.{i}.keras')
+        y_pred = model.predict(x_test, verbose=1)
+        preds.append(y_pred)
+
+    return preds
+
+
+dataset=VitalDBDataset(max_cases=150)
+x_train = dataset.x_train
+x_test = dataset.x_test
+y_train = dataset.y_train
+y_test = dataset.y_test
+
+#x= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/x_data_without_filter_150.joblib")
+#y= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/b_data_without_filter_150.joblib")
+#c= load( "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/c_data_without_filter_150.joblib")
+#x_train, x_test, y_train, y_test, c_train, c_test= split_data(x, y, c)
+
+n_models=5
+
+preds= create_ensemble(x_train, y_train, x_test, y_test, n_models=n_models)
+#preds =load_ensemble(x_test, n_models)
+
+meta_test_preds, gbrt_model = create_GBRT(preds, y_test)
+
+mae = mean_absolute_error(y_test, meta_test_preds)
+mse = mean_squared_error(y_test, meta_test_preds)
+corr = np.corrcoef(y_test, meta_test_preds)[0, 1]
+r2 = r2_score(y_test, meta_test_preds)
+
+print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")
+print(f"🔍 Meta-Ensemble GBRT MSE on Test Set: {mse:.4f}")
+print(f"🔍 Meta-Ensemble GBRT CORR on Test Set: {corr:.4f}")
+print(f"🔍 Meta-Ensemble GBRT RSQUARED on Test Set: {r2:.4f}")

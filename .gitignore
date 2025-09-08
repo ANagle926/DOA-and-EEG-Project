@@ -1,0 +1,13 @@
+
+# --- ignore large artifacts ---
+Files/Data Files/
+Files/Saved Model Files/
+*.joblib
+*.keras
+
+# common Python/IDE noise
+venv/
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.idea/
