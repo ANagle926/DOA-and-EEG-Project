@@ -7,6 +7,8 @@ from sklearn.preprocessing import StandardScaler
 from PyEMD import EEMD
 import time
 
+#loading and filtering data
+
 def apply_eemd_to_wave(wave, visualize=True):
 
     noise_std = 0.03
