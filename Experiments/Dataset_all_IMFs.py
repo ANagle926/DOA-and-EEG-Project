@@ -10,7 +10,7 @@ import time
 
 """adapting default VitalDBDataset to graph all 9 IMFS"""
 
-def apply_eemd_to_wave(wave, visualize=True):
+def apply_eemd_to_wave(wave, visualize=False):
 
     noise_std = 0.03
 
@@ -87,7 +87,7 @@ class VB2:
         x, b, c = self.remove_invalid_samples(x,b,c)
         x, b, c= self.remove_excessive_samples(x,b,c)
         x = self.apply_EEMD_filter(x)
-        self.visualize_imfs(x)
+        #self.visualize_imfs(x)
         self.split_data(x, b, c)
 
     def remove_excessive_samples(self, x, b, c):
