@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import vitaldb
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, load, dump
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from PyEMD import EEMD
@@ -70,16 +70,21 @@ class VitalDBDataset:
         self.SEGLEN = 8 * self.SRATE  # 8-second segments
         self.MAX_CASES = max_cases
 
-        x, y,c= self.load_data()
+        """x, y,c= self.load_data()
         x, y, c = self.remove_invalid_samples(x,y,c)
         x, y, c= self.remove_excessive_samples(x,y,c)
 
-        #dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter_150.joblib")
-        #dump(b,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/b_data_without_filter_150.joblib")
-        #dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/c_data_without_filter_150.joblib")
+        dump(x, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/x_data_without_filter_150.joblib")
+        dump(y,"/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/b_data_without_filter_150.joblib")
+        dump(c, "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/c_data_without_filter_150.joblib")"""
 
         #x =self.apply_EEMD_filter(x)
         #self.visualize_imfs(x)
+
+        x=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/x_data_without_filter_150.joblib")
+        y=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/b_data_without_filter_150.joblib")
+        c=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/c_data_without_filter_150.joblib")
+
 
         self.x_train, self.x_test, self.y_train, self.y_test, self.c_test, self.c_train = self.split_data(x, y, c)
 

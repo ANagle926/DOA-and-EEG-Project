@@ -76,20 +76,6 @@ class TransformerBlock(layers.Layer):
         })
         return config
 
-def create_GBRT(preds, y_true):
-
-    y_true = y_true.flatten()
-    P = np.hstack(preds)
-
-    model = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1)
-
-    model.fit(P, y_true)
-    final_predictions = model.predict(P)
-
-    #dump(model, "Files/Saved Model Files/GBRT/gbrt_model_150_raw.pkl")
-
-    return final_predictions, model
-
 def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
     x_train = x_train.reshape((-1, 1024, 1))
@@ -118,7 +104,6 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         x = MaxPooling1D(pool_size=2)(x)
         x = PositionalEmbedding(sequence_length=x.shape[1])(x)
         x = TransformerBlock(num_heads=4, key_dim=units, ff_units=128, dropout_rate=dropout)(x)
-
 
         x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
         x = Conv1D(filters=256, kernel_size=3, activation='relu')(x)
@@ -175,17 +160,48 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
     return preds
 
-def load_ensemble(x_test, n_models):
-    preds = []
+def create_GBRT(x_train, x_test, y_train, n_models=5):
+    train_preds = []
+    test_preds = []
 
     for i in range(n_models):
+        model = load_model(f'Files/Saved Model Files/Ensemble/ensemble_model_150_raw.{i}.keras')
+        train_preds.append(model.predict(x_train, verbose=0))
+        test_preds.append(model.predict(x_test, verbose=0))
 
-        model= load_model(f'ensemble_model_150_raw.{i}.keras')
-        y_pred = model.predict(x_test, verbose=1)
-        preds.append(y_pred)
+    P_test  = np.hstack(test_preds)
+    P_train = np.hstack(train_preds)
 
-    return preds
+    y_train = y_train.flatten()
 
+    gbrt = GradientBoostingRegressor(
+        n_estimators=100,
+        max_depth=3,
+        learning_rate=0.1,
+        random_state=42
+    )
+    gbrt.fit(P_train, y_train)
+
+    dump(gbrt, "Files/Saved Model Files/GBRT/gbrt_model_150_raw_new.pkl")
+    #gbrt= load("Files/Saved Model Files/GBRT/gbrt_model_150_raw_new.pkl")
+
+    final_predictions = gbrt.predict(P_test)
+
+    return final_predictions
+
+def deploy_GBRT (x_test, n_models=5):
+    test_preds = []
+
+    for i in range(n_models):
+        model = load_model(f'Files/Saved Model Files/Ensemble/ensemble_model_150_raw.{i}.keras')
+        test_preds.append(model.predict(x_test, verbose=0))
+
+    P_test  = np.hstack(test_preds)
+    gbrt= load("Files/Saved Model Files/GBRT/gbrt_model_150_raw_new.pkl")
+
+    final_predictions = gbrt.predict(P_test)
+
+    return final_predictions
 
 dataset=VitalDBDataset(max_cases=150)
 x_train = dataset.x_train
@@ -193,17 +209,11 @@ x_test = dataset.x_test
 y_train = dataset.y_train
 y_test = dataset.y_test
 
-#x= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/x_data_without_filter_150.joblib")
-#y= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/b_data_without_filter_150.joblib")
-#c= load( "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/c_data_without_filter_150.joblib")
-#x_train, x_test, y_train, y_test, c_train, c_test= split_data(x, y, c)
+#n_models=5
+#preds= create_ensemble(x_train, y_train, x_test, y_test, n_models=n_models)
+#meta_test_preds= create_GBRT(x_train, x_test, y_train)
 
-n_models=5
-
-preds= create_ensemble(x_train, y_train, x_test, y_test, n_models=n_models)
-#preds =load_ensemble(x_test, n_models)
-
-meta_test_preds, gbrt_model = create_GBRT(preds, y_test)
+meta_test_preds = deploy_GBRT(x_test)
 
 mae = mean_absolute_error(y_test, meta_test_preds)
 mse = mean_squared_error(y_test, meta_test_preds)
