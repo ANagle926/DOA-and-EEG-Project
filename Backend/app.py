@@ -10,8 +10,6 @@ import tensorflow as tf
 from keras import layers
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-
-
 app = FastAPI(title="EEG → BIS API")
 
 app.add_middleware(
@@ -89,15 +87,12 @@ class TransformerBlock(layers.Layer):
         })
         return config
 
-# -----------------------
-# Load model ONCE
-# -----------------------
+
 MODEL_PATH = "raw_model_v3.keras"
 model = load_model(MODEL_PATH, custom_objects={"PositionalEmbedding": PositionalEmbedding, "TransformerBlock": TransformerBlock})
 
 S_RATE = 128
 SEG_LEN = 1024  # 128 Hz * 8 sec
-
 
 def _segment_1d_signal(sig: np.ndarray) -> np.ndarray:
     """Convert 1D signal into (n,1024)"""
@@ -156,7 +151,7 @@ def _load_eeg_file_to_2d_array(upload: UploadFile) -> np.ndarray:
     arr = np.array(arr, dtype=np.float32)
 
     # Shape normalization
-    if arr.ndim == 1:
+    """if arr.ndim == 1:
         arr = _segment_1d_signal(arr)
 
     elif arr.ndim == 2:
@@ -170,7 +165,7 @@ def _load_eeg_file_to_2d_array(upload: UploadFile) -> np.ndarray:
                 detail=f"Expected shape (n,1024). Got {arr.shape}."
             )
     else:
-        raise HTTPException(status_code=400, detail="EEG array must be 1D or 2D.")
+        raise HTTPException(status_code=400, detail="EEG array must be 1D or 2D.")"""
 
     return arr
 
