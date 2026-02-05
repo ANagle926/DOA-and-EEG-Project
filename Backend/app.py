@@ -9,17 +9,26 @@ from keras.src.layers import Dense, Dropout,  LayerNormalization, MultiHeadAtten
 import tensorflow as tf
 from keras import layers
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+
 
 app = FastAPI(title="EEG → BIS API")
 
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # OK for testing; lock down later
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.options("/predict")
+def predict_options():
+    return Response(status_code=200)
 
 @register_keras_serializable(package="Custom")
 class PositionalEmbedding(layers.Layer):
