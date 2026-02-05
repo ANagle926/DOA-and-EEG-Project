@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 app = FastAPI(title="EEG → BIS API")
 
+#try deleting this next-- what happens?
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,13 +21,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-@app.options("/predict")
-def predict_options():
-    return Response(status_code=200)
+@app.get("/")
+def root():
+    return {"status": "EEG → BIS API running"}
 
 @register_keras_serializable(package="Custom")
 class PositionalEmbedding(layers.Layer):
@@ -169,8 +166,7 @@ def _load_eeg_file_to_2d_array(upload: UploadFile) -> np.ndarray:
 
     return arr
 
-
-@app.post("/predict")
+@app.post("/")
 async def predict(file: UploadFile = File(...)):
     x_test = _load_eeg_file_to_2d_array(file)
 
