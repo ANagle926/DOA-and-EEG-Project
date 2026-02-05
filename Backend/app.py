@@ -8,9 +8,18 @@ from keras.src.saving import register_keras_serializable, load_model
 from keras.src.layers import Dense, Dropout,  LayerNormalization, MultiHeadAttention
 import tensorflow as tf
 from keras import layers
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="EEG → BIS API")
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # OK for testing; lock down later
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @register_keras_serializable(package="Custom")
 class PositionalEmbedding(layers.Layer):
