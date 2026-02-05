@@ -1,9 +1,13 @@
-from keras.src.saving import load_model
 import io
-import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 import scipy.io
 import mne
+import numpy as np
+from keras import Sequential
+from keras.src.saving import register_keras_serializable, load_model
+from keras.src.layers import Dense, Dropout,  LayerNormalization, MultiHeadAttention
+import tensorflow as tf
+from keras import layers
 
 app = FastAPI(title="EEG → BIS API")
 
@@ -15,6 +19,67 @@ model = load_model(MODEL_PATH)
 
 S_RATE = 128
 SEG_LEN = 1024  # 128 Hz * 8 sec
+
+
+
+@register_keras_serializable()
+class PositionalEmbedding(layers.Layer):
+    def __init__(self, sequence_length, **kwargs):
+        super().__init__(**kwargs)
+        self.sequence_length = sequence_length
+
+    def build(self, input_shape):
+        d_model = input_shape[-1]
+        self.token_proj = layers.Dense(d_model)
+        self.position_embeddings = layers.Embedding(input_dim=self.sequence_length, output_dim=d_model)
+
+    def call(self, x):
+        length = tf.shape(x)[1]
+        positions = tf.range(start=0, limit=length, delta=1)
+        pos_encoding = self.position_embeddings(positions)
+        return x + pos_encoding
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"sequence_length": self.sequence_length})
+        return config
+@register_keras_serializable()
+class TransformerBlock(layers.Layer):
+    def __init__(self, num_heads, key_dim, ff_units, dropout_rate, **kwargs):
+        super().__init__(**kwargs)
+        self.num_heads = num_heads
+        self.key_dim = key_dim
+        self.ff_units = ff_units
+        self.dropout_rate = dropout_rate
+
+        self.attn = MultiHeadAttention(num_heads=num_heads, key_dim=key_dim)
+        self.attn_norm = LayerNormalization()
+        self.ffn_norm = LayerNormalization()
+
+    def build(self, input_shape):
+        embed_dim = input_shape[-1]
+        self.ffn = Sequential([
+            Dense(self.ff_units, activation='relu'),
+            Dropout(self.dropout_rate),
+            Dense(embed_dim),
+        ])
+        super().build(input_shape)
+
+    def call(self, x, training=False):
+        attn_output = self.attn(x, x, training=training)
+        attn_output = self.attn_norm(x + attn_output)
+        ffn_output = self.ffn(attn_output, training=training)
+        return self.ffn_norm(attn_output + ffn_output)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "num_heads": self.num_heads,
+            "key_dim": self.key_dim,
+            "ff_units": self.ff_units,
+            "dropout_rate": self.dropout_rate,
+        })
+        return config
 
 
 def _segment_1d_signal(sig: np.ndarray) -> np.ndarray:
