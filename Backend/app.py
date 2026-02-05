@@ -11,18 +11,8 @@ from keras import layers
 
 app = FastAPI(title="EEG → BIS API")
 
-# -----------------------
-# Load model ONCE
-# -----------------------
-MODEL_PATH = "raw_model_v3.keras"
-model = load_model(MODEL_PATH)
 
-S_RATE = 128
-SEG_LEN = 1024  # 128 Hz * 8 sec
-
-
-
-@register_keras_serializable()
+@register_keras_serializable(package="Custom")
 class PositionalEmbedding(layers.Layer):
     def __init__(self, sequence_length, **kwargs):
         super().__init__(**kwargs)
@@ -43,7 +33,7 @@ class PositionalEmbedding(layers.Layer):
         config = super().get_config()
         config.update({"sequence_length": self.sequence_length})
         return config
-@register_keras_serializable()
+@register_keras_serializable(package="Custom")
 class TransformerBlock(layers.Layer):
     def __init__(self, num_heads, key_dim, ff_units, dropout_rate, **kwargs):
         super().__init__(**kwargs)
@@ -80,6 +70,15 @@ class TransformerBlock(layers.Layer):
             "dropout_rate": self.dropout_rate,
         })
         return config
+
+# -----------------------
+# Load model ONCE
+# -----------------------
+MODEL_PATH = "raw_model_v3.keras"
+model = load_model(MODEL_PATH, custom_objects={"PositionalEmbedding": PositionalEmbedding, "TransformerBlock": TransformerBlock})
+
+S_RATE = 128
+SEG_LEN = 1024  # 128 Hz * 8 sec
 
 
 def _segment_1d_signal(sig: np.ndarray) -> np.ndarray:
