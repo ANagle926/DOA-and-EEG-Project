@@ -115,20 +115,19 @@ print("c shape is: ", c.shape)
 print("idx | y | c | x[:5] ...")
 print("-" * 50)
 
-for i in range(5):
+for i in range(15):
     print(
         f"{i:02d} | "
-        f"y={y[i]:6.2f} | "
-        f"x={x[i, :1]} ..."
-        f"c={c[i]:6.2f} | "
+        f"y={y[1000+i]:6.2f} | "
+        f"x={x[1000+i, :1]} ..."
+        f"c={c[1000+i]:6.2f} | "
     )
-
 
 x = np.array(x, dtype=np.float32)
 
 np.savetxt(
     "x_eeg_segments.csv",
-    x[:50],
+    x[1000:1015],
     delimiter=",",
     fmt="%.6f"
 )

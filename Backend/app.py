@@ -95,7 +95,6 @@ class TransformerBlock(layers.Layer):
 
 MODEL_PATH = "raw_model_v3.keras"
 model = load_model(MODEL_PATH, custom_objects={"PositionalEmbedding": PositionalEmbedding, "TransformerBlock": TransformerBlock})
-logger.info("Model loaded successfully")
 
 S_RATE = 128
 SEG_LEN = 1024  # 128 Hz * 8 sec
@@ -112,10 +111,6 @@ def _segment_1d_signal(sig: np.ndarray) -> np.ndarray:
 def _load_eeg_file_to_2d_array(upload: UploadFile) -> np.ndarray:
     filename = (upload.filename or "").lower()
     raw_bytes = upload.file.read()
-
-    logger.info("Loading EEG file")
-    logger.info(f"Raw file size: {len(raw_bytes)} bytes")
-    logger.info(f"Detected extension: {filename}")
 
     if filename.endswith(".npy"):
         arr = np.load(io.BytesIO(raw_bytes), allow_pickle=False)
@@ -199,11 +194,3 @@ async def predict(file: UploadFile = File(...)):
     except Exception as e:
         logger.exception("Prediction crashed")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-    x_test = _load_eeg_file_to_2d_array(file)
-
-    preds = model.predict(x_test, verbose=0).flatten()
-    preds = np.clip(preds, 0, 100)
-
-    return {"predictions": preds.tolist()}
