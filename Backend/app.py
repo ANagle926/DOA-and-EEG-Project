@@ -12,13 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 app = FastAPI(title="EEG → BIS API")
 
-"""app.add_middleware(
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-)"""
+)
 
 @app.get("/")
 def root():
