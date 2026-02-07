@@ -1,7 +1,7 @@
 import numpy as np
 from joblib import load, dump
 from keras import Sequential, Model
-from keras.src.saving import register_keras_serializable
+from keras.src.saving import register_keras_serializable, load_model
 from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 import matplotlib.pyplot as plt
 import os
@@ -13,7 +13,7 @@ from keras.src.optimizers.schedules import CosineDecayRestarts
 import tensorflow as tf
 from keras import layers
 from sklearn.ensemble import GradientBoostingRegressor
-
+from VitalDBDataset import VitalDBDataset
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -78,9 +78,7 @@ class TransformerBlock(layers.Layer):
 
 def build_model(x_train, y_train, x_test, y_test):
 
-    # (num_samples, 1024) → (num_samples, 1024, 1)
     x_train = x_train.reshape((-1, 1024, 1))
-    x_test  = x_test.reshape((-1, 1024, 1))
     inputs = Input(shape=(1024, 1))
     units = 128
     dropout = 0.0
@@ -130,13 +128,19 @@ def build_model(x_train, y_train, x_test, y_test):
 
     model.fit(
         x_train, y_train,
-        validation_data=(x_test, y_test),
-        epochs=80,
+        #validation_data=(x_test, y_test),
+        epochs=15,
         batch_size=32,
         callbacks=[EarlyStopping(monitor='val_mae', patience=6, restore_best_weights=True)],
         verbose=1
     )
 
+# v4 => 10 epochs => 4.14
+# v3 => 15 epochs => 3.88
+# v2 => 20 epochs => 4.18
+# v1 => 30 epochs => 4.3?
+
+    #model.save('raw_model_v3.keras')
     return model
 
 def evaluate_model(model, x_test, y_test):
@@ -379,19 +383,18 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
         model.fit(
             x_train, y_train,
-            validation_data=(x_test, y_test),
+            #validation_data=(x_test, y_test),
             epochs=80,
             batch_size=batch_size,
             callbacks=callbacks,
             verbose=1
         )
 
-        model.save(f'ensemble_model_150_test.{i}.keras')
+        model.save(f'ensemble_model_test.{i}.keras')
         y_pred = model.predict(x_test, verbose=1)
         preds.append(y_pred)
 
     return preds
-
 
 
 def split_data(x, y, c):
@@ -412,17 +415,24 @@ def split_data(x, y, c):
     return x_train, x_test, y_train, y_test
 
 
-#loading raw EEG data
+""""#loading raw EEG data
 x= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/x_data_without_filter_150.joblib")
 y= load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/b_data_without_filter_150.joblib")
 c= load( "/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Data Files/c_data_without_filter_150.joblib")
-x_train_raw, x_test_raw, y_train_raw, y_test_raw= split_data(x, y, c)
+x_train_raw, x_test_raw, y_train_raw, y_test_raw= split_data(x, y, c)"""
+
+dataset=VitalDBDataset(max_cases=150)
+x_train_raw = dataset.x_train
+x_test_raw = dataset.x_test
+y_train_raw = dataset.y_train
+y_test_raw = dataset.y_test
 
 #model trained on raw EEG data
-raw_model = build_model(x_train_raw, y_train_raw, x_test_raw, y_test_raw)
+#raw_model = build_model(x_train_raw, y_train_raw, x_test_raw, y_test_raw)
+raw_model= load_model('../Files/Saved Model Files/raw_model_v2.keras')
 evaluate_model(raw_model, x_test_raw, y_test_raw)
 
-#pruning raw data
+"""#pruning raw data
 mask, saliency_maps, importance = IG_temporal_pruning(
     raw_model,
     x_train_raw[:2000],
@@ -442,7 +452,7 @@ n_models=5
 
 
 #ensemble with raw data
-raw_preds= create_ensemble( x_train_raw, y_train_raw, x_test_raw, y_test_raw, n_models=n_models)
+raw_preds= create_ensemble( x_train_raw, y_train_raw, x_test_raw, y_test_raw, n_models=5)
 raw_meta_test_preds, raw_gbrt_model = create_GBRT(raw_preds, y_test_raw)
 
 mae = mean_absolute_error(y_test_raw, raw_meta_test_preds)
@@ -468,4 +478,4 @@ r2 = r2_score(y_test_raw, raw_pruned_meta_test_preds)
 print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")
 print(f"🔍 Meta-Ensemble GBRT MSE on Test Set: {mse:.4f}")
 print(f"🔍 Meta-Ensemble GBRT CORR on Test Set: {corr:.4f}")
-print(f"🔍 Meta-Ensemble GBRT RSQUARED on Test Set: {r2:.4f}")
+print(f"🔍 Meta-Ensemble GBRT RSQUARED on Test Set: {r2:.4f}")"""

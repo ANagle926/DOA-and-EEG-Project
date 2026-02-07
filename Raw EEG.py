@@ -1,16 +1,16 @@
 import numpy as np
+from joblib import load, dump
 from keras import Sequential, Model
-from keras.src.saving import register_keras_serializable
-from matplotlib import pyplot
+from keras.src.saving import register_keras_serializable, load_model
 from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
+import matplotlib.pyplot as plt
 import os
-from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, \
-    GlobalAveragePooling1D, MultiHeadAttention
+from keras.src.layers import Input, Dense, Dropout, Conv1D, Bidirectional, LayerNormalization, LSTM, MaxPooling1D, GlobalAveragePooling1D, MultiHeadAttention
 from keras.src.optimizers import Adam
+from keras.src.callbacks import EarlyStopping
 from keras.src.optimizers.schedules import CosineDecayRestarts
 import tensorflow as tf
 from keras import layers
-
 from VitalDBDataset import VitalDBDataset
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -126,104 +126,72 @@ def build_model(x_train, y_train):
 
     model.fit(
         x_train, y_train,
+        #validation_data=(x_test, y_test),
         epochs=15,
         batch_size=32,
-        verbose=0
+        callbacks=[EarlyStopping(monitor='val_mae', patience=6, restore_best_weights=True)],
+        verbose=1
     )
+
+    # v4 => 10 epochs => 4.14
+    # v3 => 15 epochs => 3.88
+    # v2 => 20 epochs => 4.18?
+    # v1 => 30 epochs => 4.3?
+    #model.save('raw_model_v3.keras')
 
     return model
 
-dataset=VitalDBDataset(max_cases=150)
-x_train = dataset.x_train
-x_test = dataset.x_test
-y_train = dataset.y_train
-y_test = dataset.y_test
+def evaluate_model(model, x_test, y_test):
 
-# configure bootstrap
-n_iterations = 30
-
-# run bootstrap
-mae_list = list()
-mse_list= list()
-rmse_list= list()
-corr_list= list()
-r2_list= list()
-
-for i in range(n_iterations):
-
-    model = build_model(x_train, y_train)
-    pred= model.predict(x_test).flatten()
-
-    mae = mean_absolute_error(y_test, pred)
-    mse = mean_squared_error(y_test, pred)
+    pred_test = model.predict(x_test).flatten()
+    test_mae = mean_absolute_error(y_test, pred_test)
+    mse = mean_squared_error(y_test, pred_test)
     rmse = np.sqrt(mse)
-    corr = np.corrcoef(y_test, pred)[0, 1]
-    r2 = r2_score(y_test, pred)
+    corr = np.corrcoef(y_test, pred_test)[0, 1]
+    r2 = r2_score(y_test, pred_test)
 
-    mae_list.append(mae)
-    mse_list.append(mse)
-    rmse_list.append(rmse)
-    corr_list.append(corr)
-    r2_list.append(r2)
+    print(f"\n\U0001f4ca Test MAE: {test_mae:.4f}")
+    print(f"🧮 MSE: {mse:.4f}")
+    print(f"📏 RMSE: {rmse:.4f}")
+    print(f"\U0001f4c8 Correlation coefficient: {corr:.4f}")
+    print(f"\u2310 R² score: {r2:.4f}")
 
-    print(f"[{i+1}/{n_iterations}] MAE: {mae:.4f}")
+    errors = y_test - pred_test
+    plt.figure(figsize=(8, 4))
+    plt.hist(errors, bins=50, edgecolor='black')
+    plt.xlabel('Prediction Error')
+    plt.ylabel('Count')
+    plt.title('Histogram of Prediction Errors')
+    plt.grid(True)
+    plt.show()
 
-# Plot results
-pyplot.hist(mae_list, bins=30)
-pyplot.xlabel("MAE")
-pyplot.ylabel("Frequency")
-pyplot.title("Bootstrap Distribution of GBRT Meta-MAE")
-pyplot.show()
-
-pyplot.hist(mse_list, bins=30)
-pyplot.xlabel("MSE")
-pyplot.ylabel("Frequency")
-pyplot.title("Bootstrap Distribution of GBRT Meta-MSE")
-pyplot.show()
-
-pyplot.hist(rmse_list, bins=30)
-pyplot.xlabel("RMSE")
-pyplot.ylabel("Frequency")
-pyplot.title("Bootstrap Distribution of GBRT Meta-RMSE")
-pyplot.show()
-
-pyplot.hist(corr_list, bins=30)
-pyplot.xlabel("Corr")
-pyplot.ylabel("Frequency")
-pyplot.title("Bootstrap Distribution of GBRT Meta-corr")
-pyplot.show()
-
-pyplot.hist(r2_list, bins=30)
-pyplot.xlabel("r2")
-pyplot.ylabel("Frequency")
-pyplot.title("Bootstrap Distribution of GBRT Meta-r2")
-pyplot.show()
-
-# confidence intervals
-alpha = 0.95
-lower = np.percentile(mae_list, ((1.0 - alpha) / 2.0) * 100)
-upper = np.percentile(mae_list, (alpha + (1.0 - alpha) / 2.0) * 100)
-print(f"{alpha*100:.1f}% confidence interval for MAE: {lower:.4f} to {upper:.4f}")
-
-# confidence intervals
-lower = np.percentile(mse_list, ((1.0 - alpha) / 2.0) * 100)
-upper = np.percentile(mse_list, (alpha + (1.0 - alpha) / 2.0) * 100)
-print(f"{alpha*100:.1f}% confidence interval for MSE: {lower:.4f} to {upper:.4f}")
+    abs_errors = np.abs(errors)
+    plt.figure(figsize=(6, 6))
+    sc = plt.scatter(y_test, pred_test, c=abs_errors, s=2, cmap='viridis', alpha=0.6)
+    plt.xlabel('Actual BIS')
+    plt.ylabel('Predicted BIS')
+    plt.title('Colored Error Scatter Plot')
+    plt.colorbar(sc, label='Absolute Error')
+    plt.plot([0, max(y_test)], [0, max(y_test)], 'r--')
+    plt.grid(True)
+    plt.show()
 
 
-# confidence intervals
-lower = np.percentile(rmse_list, ((1.0 - alpha) / 2.0) * 100)
-upper = np.percentile(rmse_list, (alpha + (1.0 - alpha) / 2.0) * 100)
-print(f"{alpha*100:.1f}% confidence interval for RMSE: {lower:.4f} to {upper:.4f}")
+dataset=VitalDBDataset(max_cases=150)
+x_train_raw = dataset.x_train
+x_test_raw = dataset.x_test
+y_train_raw = dataset.y_train
+y_test_raw = dataset.y_test
+
+print(x_test_raw.shape)
+
+raw_model = build_model(x_train_raw, y_train_raw)
+#raw_model= load_model('raw_model_v3.keras')
+evaluate_model(raw_model, x_test_raw, y_test_raw)
 
 
-# confidence intervals
-lower = np.percentile(corr_list, ((1.0 - alpha) / 2.0) * 100)
-upper = np.percentile(corr_list, (alpha + (1.0 - alpha) / 2.0) * 100)
-print(f"{alpha*100:.1f}% confidence interval for CORR: {lower:.4f} to {upper:.4f}")
-
-
-# confidence intervals
-lower = np.percentile(r2_list, ((1.0 - alpha) / 2.0) * 100)
-upper = np.percentile(r2_list, (alpha + (1.0 - alpha) / 2.0) * 100)
-print(f"{alpha*100:.1f}% confidence interval for R2: {lower:.4f} to {upper:.4f}")
+""""📊 Test MAE: 4.2560
+🧮 MSE: 35.0886
+📏 RMSE: 5.9236
+📈 Correlation coefficient: 0.8222
+⌐ R² score: 0.6422"""

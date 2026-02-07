@@ -76,13 +76,10 @@ class TransformerBlock(layers.Layer):
         })
         return config
 
-def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
+def create_ensemble(x_train, y_train, n_models=5):
 
     x_train = x_train.reshape((-1, 1024, 1))
-    x_test  = x_test.reshape((-1, 1024, 1))
     inputs = Input(shape=(1024, 1))
-
-    preds = []
 
     for i in range(n_models):
         print(f"\n🔁 Training model {i + 1}/{n_models}")
@@ -137,35 +134,26 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
 
         model.compile(
             optimizer=Adam(learning_rate=lr_schedule),
-            loss=keras.losses.Huber(delta=1.0),
+            loss='huber',
             metrics=['mae']
         )
 
-        callbacks = [
-            EarlyStopping(monitor='val_mae', patience=6, restore_best_weights=True, verbose=1),
-        ]
-
         model.fit(
             x_train, y_train,
-            validation_data=(x_test, y_test),
-            epochs=80,
+            epochs=15,
             batch_size=batch_size,
-            callbacks=callbacks,
             verbose=1
         )
-
-        #model.save(f'ensemble_model_150_raw.{i}.keras')
-        y_pred = model.predict(x_test, verbose=1)
-        preds.append(y_pred)
-
-    return preds
+        model.save(f'ensemble_model_raw_v1.{i}.keras')
 
 def create_GBRT(x_train, x_test, y_train, n_models=5):
     train_preds = []
     test_preds = []
 
+    #STILL WRONG:
+
     for i in range(n_models):
-        model = load_model(f'Files/Saved Model Files/Ensemble/ensemble_model_150_raw.{i}.keras')
+        model = load_model(f'ensemble_model_raw_v1.{i}.keras')
         train_preds.append(model.predict(x_train, verbose=0))
         test_preds.append(model.predict(x_test, verbose=0))
 
@@ -182,7 +170,7 @@ def create_GBRT(x_train, x_test, y_train, n_models=5):
     )
     gbrt.fit(P_train, y_train)
 
-    dump(gbrt, "Files/Saved Model Files/GBRT/gbrt_model_150_raw_new.pkl")
+    dump(gbrt, "../../Files/Saved Model Files/GBRT/gbrt_model_150_raw_new.pkl")
     #gbrt= load("Files/Saved Model Files/GBRT/gbrt_model_150_raw_new.pkl")
 
     final_predictions = gbrt.predict(P_test)
@@ -197,7 +185,7 @@ def deploy_GBRT (x_test, n_models=5):
         test_preds.append(model.predict(x_test, verbose=0))
 
     P_test  = np.hstack(test_preds)
-    gbrt= load("Files/Saved Model Files/GBRT/gbrt_model_150_raw_new.pkl")
+    gbrt= load("../../Files/Saved Model Files/GBRT/gbrt_model_150_raw_new.pkl")
 
     final_predictions = gbrt.predict(P_test)
 
@@ -209,16 +197,16 @@ x_test = dataset.x_test
 y_train = dataset.y_train
 y_test = dataset.y_test
 
-#n_models=5
-#preds= create_ensemble(x_train, y_train, x_test, y_test, n_models=n_models)
-#meta_test_preds= create_GBRT(x_train, x_test, y_train)
+n_models=5
+create_ensemble(x_train, y_train, n_models=n_models)
+preds= create_GBRT(x_train, x_test, y_train)
 
-meta_test_preds = deploy_GBRT(x_test)
+#meta_test_preds = deploy_GBRT(x_test)
 
-mae = mean_absolute_error(y_test, meta_test_preds)
-mse = mean_squared_error(y_test, meta_test_preds)
-corr = np.corrcoef(y_test, meta_test_preds)[0, 1]
-r2 = r2_score(y_test, meta_test_preds)
+mae = mean_absolute_error(y_test, preds)
+mse = mean_squared_error(y_test, preds)
+corr = np.corrcoef(y_test, preds)[0, 1]
+r2 = r2_score(y_test, preds)
 
 print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")
 print(f"🔍 Meta-Ensemble GBRT MSE on Test Set: {mse:.4f}")

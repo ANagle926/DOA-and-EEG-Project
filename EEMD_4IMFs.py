@@ -11,8 +11,6 @@ import keras
 from keras.src.optimizers.schedules import CosineDecayRestarts
 import tensorflow as tf
 from keras import layers
-from sklearn.ensemble import GradientBoostingRegressor
-
 from VitalDBDataset import VitalDBDataset
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -285,7 +283,7 @@ def apply_temporal_and_spatial_pruning(x_data, important_channels, timestep_mask
     return x_pruned
 
 
-def create_GBRT(preds, y_true):
+"""def create_GBRT(preds, y_true):
 
     y_true = y_true.flatten()
     P = np.hstack(preds)
@@ -379,7 +377,7 @@ def create_ensemble(x_train, y_train, x_test, y_test, n_models=5):
         y_pred = model.predict(x_test, verbose=1)
         preds.append(y_pred)
 
-    return preds
+    return preds"""
 
 
 #loading data with EEMD processing
@@ -390,20 +388,3 @@ x_train_processed, y_train_processed = dataset.x_train, dataset.y_train
 #model trained on EEMD processed data
 processed_model = build_model(x_train_processed, y_train_processed, x_test_processed, y_test_processed)
 evaluate_model(processed_model, x_test_processed, y_test_processed)
-
-
-n_models=5
-#ensemble model with EEMD data
-EEMD_preds= create_ensemble(x_train_processed, y_train_processed, x_test_processed, y_test_processed, n_models=n_models)
-EEMD_meta_test_preds, EEMD_gbrt_model = create_GBRT(EEMD_preds, y_test_processed)
-
-mae = mean_absolute_error(y_test_processed, EEMD_meta_test_preds)
-mse = mean_squared_error(y_test_processed, EEMD_meta_test_preds)
-corr = np.corrcoef(y_test_processed, EEMD_meta_test_preds)[0, 1]
-r2 = r2_score(y_test_processed, EEMD_meta_test_preds)
-
-print(f"🔍 Meta-Ensemble GBRT MAE on Test Set: {mae:.4f}")
-print(f"🔍 Meta-Ensemble GBRT MSE on Test Set: {mse:.4f}")
-print(f"🔍 Meta-Ensemble GBRT CORR on Test Set: {corr:.4f}")
-print(f"🔍 Meta-Ensemble GBRT RSQUARED on Test Set: {r2:.4f}")
-

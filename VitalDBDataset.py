@@ -64,7 +64,7 @@ def process_dataset_eemd(x_data, n_jobs=8):
     return np.array(processed)  # shape: (samples, 125, 3)
 
 class VitalDBDataset:
-    def __init__(self, max_cases=20, srate=128):
+    def __init__(self, max_cases=150, srate=128):
 
         self.SRATE = srate
         self.SEGLEN = 8 * self.SRATE  # 8-second segments
@@ -81,10 +81,9 @@ class VitalDBDataset:
         #x =self.apply_EEMD_filter(x)
         #self.visualize_imfs(x)
 
-        x=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/x_data_without_filter_150.joblib")
-        y=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/b_data_without_filter_150.joblib")
-        c=load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/c_data_without_filter_150.joblib")
-
+        x = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/x_data_without_filter_150.joblib")
+        y = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/b_data_without_filter_150.joblib")
+        c = load("/mnt/c/Users/Nagle2/PycharmProjects/DOA-and-EEG-Project/Files/Data Files/c_data_without_filter_150.joblib")
 
         self.x_train, self.x_test, self.y_train, self.y_test, self.c_test, self.c_train = self.split_data(x, y, c)
 
