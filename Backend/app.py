@@ -1,7 +1,5 @@
 import io
 from fastapi import FastAPI, UploadFile, File, HTTPException
-import scipy.io
-import mne
 import numpy as np
 from keras import Sequential
 from keras.src.saving import register_keras_serializable, load_model
@@ -10,9 +8,7 @@ import tensorflow as tf
 from keras import layers
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from fastapi.responses import Response
 app = FastAPI(title="EEG → BIS API")
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,29 +95,26 @@ model = load_model(MODEL_PATH, custom_objects={"PositionalEmbedding": Positional
 S_RATE = 128
 SEG_LEN = 1024  # 128 Hz * 8 sec
 
-def _segment_1d_signal(sig: np.ndarray) -> np.ndarray:
-    """Convert 1D signal into (n,1024)"""
-    sig = sig.astype(np.float32)
-    n = sig.size // SEG_LEN
-    if n == 0:
-        raise HTTPException(status_code=400, detail="Not enough samples for one 8-second segment.")
-    return sig[: n * SEG_LEN].reshape(n, SEG_LEN)
-
-
 def _load_eeg_file_to_2d_array(upload: UploadFile) -> np.ndarray:
     filename = (upload.filename or "").lower()
     raw_bytes = upload.file.read()
 
-    if filename.endswith(".npy"):
-        arr = np.load(io.BytesIO(raw_bytes), allow_pickle=False)
-
-    elif filename.endswith(".csv") or filename.endswith(".txt"):
+    if filename.endswith(".csv") or filename.endswith(".txt"):
         text = raw_bytes.decode("utf-8", errors="ignore")
         try:
             arr = np.loadtxt(io.StringIO(text), delimiter=",")
         except Exception:
             arr = np.loadtxt(io.StringIO(text))
 
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Upload .npy, .csv, .txt, .mat, or .edf."
+        )
+
+    """elif filename.endswith(".npy"):
+        arr = np.load(io.BytesIO(raw_bytes), allow_pickle=False)
+        
     elif filename.endswith(".mat"):
         mat = scipy.io.loadmat(io.BytesIO(raw_bytes))
         candidates = [
@@ -151,26 +144,9 @@ def _load_eeg_file_to_2d_array(upload: UploadFile) -> np.ndarray:
         raise HTTPException(
             status_code=400,
             detail="Unsupported file type. Upload .npy, .csv, .txt, .mat, or .edf."
-        )
+        )"""
 
     arr = np.array(arr, dtype=np.float32)
-
-    # Shape normalization
-    """if arr.ndim == 1:
-        arr = _segment_1d_signal(arr)
-
-    elif arr.ndim == 2:
-        if arr.shape[1] == SEG_LEN:
-            pass
-        elif arr.shape[0] == SEG_LEN:
-            arr = arr.T
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Expected shape (n,1024). Got {arr.shape}."
-            )
-    else:
-        raise HTTPException(status_code=400, detail="EEG array must be 1D or 2D.")"""
 
     return arr
 

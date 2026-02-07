@@ -120,7 +120,6 @@ for i in range(15):
         f"{i:02d} | "
         f"y={y[1000+i]:6.2f} | "
         f"x={x[1000+i, :1]} ..."
-        f"c={c[1000+i]:6.2f} | "
     )
 
 x = np.array(x, dtype=np.float32)
